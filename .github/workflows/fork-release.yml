@@ -115,6 +115,12 @@ jobs:
             echo '```'
             echo 'xattr -dr com.apple.quarantine "/Applications/Clash Verge.app"'
             echo '```'
+            echo
+            echo "On Ubuntu 22.04, Debian 12 or later, install or upgrade to the latest release with:"
+            echo
+            echo '```'
+            echo "curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install-linux.sh | bash"
+            echo '```'
           } > release.md
           cat release.md
 
@@ -130,6 +136,7 @@ jobs:
           find artifacts -type f | while IFS= read -r f; do
             mv "$f" "assets/$(basename "$f" | tr ' ' '.')"
           done
+          cp scripts/fork-install-linux.sh assets/install-linux.sh
           cd assets
           sha256sum * > checksums.txt
           cat checksums.txt
