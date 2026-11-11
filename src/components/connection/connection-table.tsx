@@ -217,20 +217,50 @@ const getConnectionCellValue = (
   }
 }
 
-const compareConnectionCellValue = (
-  field: ColumnField,
-  left: IConnectionsItem,
-  right: IConnectionsItem,
-  getSnapshot: (row: IConnectionsItem) => TableRowSnapshot,
-) => {
-  const leftValue = getConnectionCellValue(field, getSnapshot(left))
-  const rightValue = getConnectionCellValue(field, getSnapshot(right))
+// The value getConnectionCellValue shows, taken from the row itself: sorting visits
+// every row, more of them than the row snapshot cache holds on a large list.
+const getConnectionSortKey = (field: ColumnField, row: IConnectionsItem) => {
+  switch (field) {
+    case 'host':
+      return getConnectionHost(row)
+    case 'download':
+      return row.download ?? 0
+    case 'upload':
+      return row.upload ?? 0
+    case 'dlSpeed':
+      return row.curDownload ?? 0
+    case 'ulSpeed':
+      return row.curUpload ?? 0
+    case 'chains':
+      return formatConnectionChains(row.chains)
+    case 'rule':
+      return getConnectionRule(row)
+    case 'process':
+      return getConnectionProcess(row)
+    case 'time':
+      return getConnectionStartTime(row)
+    case 'source':
+      return getConnectionSource(row)
+    case 'remoteDestination':
+      return getConnectionDestination(row)
+    case 'type':
+      return getConnectionTypeLabel(row)
+    default:
+      return ''
+  }
+}
 
+const sortKeyCollator = new Intl.Collator()
+
+const compareConnectionSortKeys = (
+  leftValue: string | number,
+  rightValue: string | number,
+) => {
   if (typeof leftValue === 'number' || typeof rightValue === 'number') {
     return (Number(leftValue) || 0) - (Number(rightValue) || 0)
   }
 
-  return String(leftValue ?? '').localeCompare(String(rightValue ?? ''))
+  return sortKeyCollator.compare(leftValue, rightValue)
 }
 
 const renderCell = (
@@ -583,12 +613,16 @@ export const ConnectionTable = (props: Props) => {
     if (!sorting) return connections
 
     const direction = sorting.desc ? -1 : 1
+    const keys = new Map<IConnectionsItem, string | number>()
+    for (let i = 0; i < connections.length; i++) {
+      keys.set(connections[i], getConnectionSortKey(sorting.id, connections[i]))
+    }
     return [...connections].sort(
       (left, right) =>
-        compareConnectionCellValue(sorting.id, left, right, getRowSnapshot) *
+        compareConnectionSortKeys(keys.get(left) ?? '', keys.get(right) ?? '') *
         direction,
     )
-  }, [connections, sorting, getRowSnapshot])
+  }, [connections, sorting])
 
   const tableWidth = useMemo(
     () => visibleColumns.reduce((total, column) => total + column.size, 0),
