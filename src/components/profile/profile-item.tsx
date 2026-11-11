@@ -597,10 +597,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
       id: `save-profile-file:${uid}`,
       errorNotice: false,
     })
-    if (!(result.ok && result.value === true)) {
-      await profileDocument.reload()
-      return
-    }
+    if (!(result.ok && result.value === true)) return false
     onSave?.(profileDocument.savedValue, currentValue)
     profileDocument.markSaved(currentValue)
   })
@@ -612,10 +609,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
       id: `save-profile-file:${mergeUid}`,
       errorNotice: false,
     })
-    if (!(result.ok && result.value === true)) {
-      await mergeDocument.reload()
-      return
-    }
+    if (!(result.ok && result.value === true)) return false
     onSave?.(mergeDocument.savedValue, currentValue)
     mergeDocument.markSaved(currentValue)
   })
@@ -630,10 +624,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
         errorNotice: false,
       },
     )
-    if (!(result.ok && result.value === true)) {
-      await scriptDocument.reload()
-      return
-    }
+    if (!(result.ok && result.value === true)) return false
     onSave?.(scriptDocument.savedValue, currentValue)
     scriptDocument.markSaved(currentValue)
   })
