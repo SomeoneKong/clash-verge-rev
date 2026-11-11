@@ -29,7 +29,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri_plugin_mihomo::models::{Proxies, ProxyType};
-use tokio::{fs, task::JoinHandle};
+use tokio::task::JoinHandle;
 
 pub(crate) static PROFILE_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -199,7 +199,7 @@ impl IProfiles {
                 .ok_or_else(|| anyhow::anyhow!("file field is required when file_data is provided"))?;
             let path = dirs::app_profiles_dir()?.join(file.as_str());
 
-            fs::write(&path, file_data.as_bytes())
+            help::save_yaml_str(&path, file_data.as_str())
                 .await
                 .with_context(|| format!("failed to write to file \"{file}\""))?;
         }
@@ -303,7 +303,8 @@ impl IProfiles {
 
                         let path = dirs::app_profiles_dir()?.join(file.as_str());
 
-                        fs::write(&path, file_data.as_bytes())
+                        // replaced in one step, a failed write keeps the running subscription
+                        help::save_yaml_str(&path, file_data.as_str())
                             .await
                             .with_context(|| format!("failed to write to file \"{file}\""))?;
                     }
