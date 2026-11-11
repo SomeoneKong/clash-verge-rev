@@ -22,9 +22,9 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-const RELEASE_VERSION_URL: &str = "https://github.com/MetaCubeX/mihomo/releases/latest/download/version.txt";
-const ALPHA_BASE_URL: &str = "https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha";
-const RELEASE_DOWNLOAD_URL: &str = "https://github.com/MetaCubeX/mihomo/releases/download";
+const RELEASE_VERSION_URL: &str = "https://github.com/SomeoneKong/mihomo/releases/latest/download/version.txt";
+const ALPHA_BASE_URL: &str = "https://github.com/SomeoneKong/mihomo/releases/latest/download";
+const RELEASE_DOWNLOAD_URL: &str = "https://github.com/SomeoneKong/mihomo/releases/download";
 const VERSION_TIMEOUT_SECS: u64 = 20;
 const PACKAGE_TIMEOUT_SECS: u64 = 300;
 /// Well above any real core package, low enough that a wrong response cannot exhaust memory.
@@ -184,7 +184,7 @@ fn package_url(alpha: bool, version: &str) -> Result<std::string::String> {
 
 /// Mirrors the asset map in `scripts/prebuild.mjs` so an upgrade keeps the build variant
 /// the bundled sidecar was taken from.
-fn asset_base_name(alpha: bool) -> Result<&'static str> {
+fn asset_base_name(_alpha: bool) -> Result<&'static str> {
     let arch = std::env::consts::ARCH;
     let unsupported = || anyhow!("no mihomo release asset for {}-{arch}", std::env::consts::OS);
 
@@ -197,9 +197,8 @@ fn asset_base_name(alpha: bool) -> Result<&'static str> {
         }
     } else if cfg!(target_os = "macos") {
         match arch {
-            "x86_64" if alpha => "mihomo-darwin-amd64-v1-go122",
-            "x86_64" => "mihomo-darwin-amd64-v2-go122",
-            "aarch64" => "mihomo-darwin-arm64-go122",
+            "x86_64" => "mihomo-darwin-amd64-v2",
+            "aarch64" => "mihomo-darwin-arm64",
             _ => return Err(unsupported()),
         }
     } else {
@@ -494,6 +493,6 @@ mod tests {
             release.ends_with("-v1.19.30.gz") || release.ends_with("-v1.19.30.zip"),
             "{release}"
         );
-        assert!(alpha.contains("/Prerelease-Alpha/"), "{alpha}");
+        assert!(alpha.contains("/releases/latest/download/"), "{alpha}");
     }
 }

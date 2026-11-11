@@ -160,22 +160,24 @@ async function updateHashCache(targetPath) {
 }
 
 // Mihomo release maps
+// Both cores come from the custom mihomo fork, which publishes a single channel. Its
+// asset names follow the names its core updater looks for, without the go122 builds.
 const META_ALPHA_VERSION_URL =
-  'https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha/version.txt'
-const META_ALPHA_URL_PREFIX = `https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha`
+  'https://github.com/SomeoneKong/mihomo/releases/latest/download/version.txt'
+const META_ALPHA_URL_PREFIX = `https://github.com/SomeoneKong/mihomo/releases/latest/download`
 let META_ALPHA_VERSION
 
 const META_VERSION_URL =
-  'https://github.com/MetaCubeX/mihomo/releases/latest/download/version.txt'
-const META_URL_PREFIX = `https://github.com/MetaCubeX/mihomo/releases/download`
+  'https://github.com/SomeoneKong/mihomo/releases/latest/download/version.txt'
+const META_URL_PREFIX = `https://github.com/SomeoneKong/mihomo/releases/download`
 let META_VERSION
 
 const META_ALPHA_MAP = {
   'win32-x64': 'mihomo-windows-amd64-v2',
   'win32-ia32': 'mihomo-windows-386',
   'win32-arm64': 'mihomo-windows-arm64',
-  'darwin-x64': 'mihomo-darwin-amd64-v1-go122',
-  'darwin-arm64': 'mihomo-darwin-arm64-go122',
+  'darwin-x64': 'mihomo-darwin-amd64-v2',
+  'darwin-arm64': 'mihomo-darwin-arm64',
   'linux-x64': 'mihomo-linux-amd64-v2',
   'linux-ia32': 'mihomo-linux-386',
   'linux-arm64': 'mihomo-linux-arm64',
@@ -188,8 +190,8 @@ const META_MAP = {
   'win32-x64': 'mihomo-windows-amd64-v2',
   'win32-ia32': 'mihomo-windows-386',
   'win32-arm64': 'mihomo-windows-arm64',
-  'darwin-x64': 'mihomo-darwin-amd64-v2-go122',
-  'darwin-arm64': 'mihomo-darwin-arm64-go122',
+  'darwin-x64': 'mihomo-darwin-amd64-v2',
+  'darwin-arm64': 'mihomo-darwin-arm64',
   'linux-x64': 'mihomo-linux-amd64-v2',
   'linux-ia32': 'mihomo-linux-386',
   'linux-arm64': 'mihomo-linux-arm64',
