@@ -104,10 +104,7 @@ export const ProfileMore = (props: Props) => {
       id: `save-profile-file:${id}`,
       errorNotice: false,
     })
-    if (!(result.ok && result.value === true)) {
-      await document.reload()
-      return
-    }
+    if (!(result.ok && result.value === true)) return false
     onSave?.(document.savedValue, currentValue)
     document.markSaved(currentValue)
   })

@@ -334,11 +334,8 @@ export const ProxiesEditorViewer = (props: Props) => {
         id: `save-profile-file:${property}`,
         errorNotice: false,
       })
-      if (!(result.ok && result.value === true)) {
-        await fetchContent()
-        onClose()
-        return
-      }
+      // keep the editor and the edit open, so a failed save can be fixed
+      if (!(result.ok && result.value === true)) return
       showNotice.success('shared.feedback.notifications.saved')
       onSave?.(prevData, currData)
       onClose()
