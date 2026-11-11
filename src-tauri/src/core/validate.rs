@@ -265,15 +265,13 @@ impl CoreConfigValidator {
             content.contains("function main") || content.contains("const main") || content.contains("let main");
 
         // Boa parsing is pure CPU; keep it off the async worker, with a timeout.
+        // Parsed only, not run: the timeout can't stop a running script, such as one
+        // that loops forever at its top level, which would keep a thread busy for good.
         let syntax = crate::process::AsyncHandler::spawn_blocking(move || {
-            use boa_engine::{Context, Source};
+            use boa_engine::{Context, Script, Source};
 
             let mut context = Context::default();
-            let _ = context.eval(Source::from_bytes(
-                "var console = Object.freeze({log(...data){},info(...data){},error(...data){},debug(...data){}});",
-            ));
-            context
-                .eval(Source::from_bytes(&content))
+            Script::parse(Source::from_bytes(&content), None, &mut context)
                 .map(|_| ())
                 .map_err(|err| err.to_string())
         });
