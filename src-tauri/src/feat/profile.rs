@@ -3,7 +3,10 @@ use crate::core::notify::{Refresh, announce};
 use crate::{
     cmd,
     config::{Config, PrfItem, PrfOption, profiles::profiles_update_item_safe},
-    core::{CoreManager, handle, tray, validate::ValidationOutcome},
+    core::{
+        CoreManager, handle, tray,
+        validate::{ValidationOutcome, ValidationSkipReason},
+    },
     utils::help::{mask_err, mask_url},
 };
 use anyhow::{Result, bail};
@@ -216,7 +219,11 @@ pub async fn update_profile(uid: &String, option: Option<&PrfOption>, is_mannual
 
     if should_refresh {
         logging!(debug, Type::Config, "[订阅更新] 更新内核配置");
-        match CoreManager::global().update_config_with_force(is_mannual_trigger).await {
+        let mut result = CoreManager::global().update_config_with_force(is_mannual_trigger).await;
+        if profile_persisted && !is_mannual_trigger {
+            result = apply_saved_profile(uid, result).await;
+        }
+        match result {
             Ok(outcome) if outcome.is_valid() => announce(Refresh::Clash),
             Ok(outcome @ (ValidationOutcome::Skipped { .. } | ValidationOutcome::Busy)) if !is_mannual_trigger => {
                 logging!(info, Type::Config, "[订阅更新] 本次配置刷新已跳过: {}", outcome);
@@ -240,6 +247,41 @@ pub async fn update_profile(uid: &String, option: Option<&PrfOption>, is_mannual
     }
 
     Ok(())
+}
+
+async fn is_current_profile(uid: &String) -> bool {
+    Config::profiles().await.latest_arc().current.as_ref() == Some(uid)
+}
+
+const APPLY_SAVED_PROFILE_ATTEMPTS: usize = 60;
+const APPLY_SAVED_PROFILE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Applies a saved subscription that a config update running meanwhile, or the
+/// debounce right after one, kept from the core: that update may have read the
+/// previous subscription, and the next automatic update is hours away.
+async fn apply_saved_profile(uid: &String, mut result: Result<ValidationOutcome>) -> Result<ValidationOutcome> {
+    let kept_from_core = |result: &Result<ValidationOutcome>| {
+        matches!(
+            result,
+            Ok(ValidationOutcome::Busy
+                | ValidationOutcome::Skipped {
+                    reason: ValidationSkipReason::Debounced,
+                })
+        )
+    };
+    for _ in 0..APPLY_SAVED_PROFILE_ATTEMPTS {
+        // switching to another profile applies that one itself
+        if !kept_from_core(&result) || !is_current_profile(uid).await {
+            return result;
+        }
+        tokio::time::sleep(APPLY_SAVED_PROFILE_RETRY_DELAY).await;
+        result = CoreManager::global().update_config_with_force(true).await;
+    }
+    // reported as not applied rather than skipped, which would count as done
+    if kept_from_core(&result) {
+        bail!("other config updates kept running");
+    }
+    result
 }
 
 /// 增强配置
