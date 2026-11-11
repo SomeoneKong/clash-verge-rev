@@ -108,7 +108,8 @@ fn profile_affects_runtime(profiles: &IProfiles, index: &str) -> bool {
     let Some(current_uid) = profiles.current.as_ref() else {
         return false;
     };
-    if current_uid == index {
+    // the global Merge and Script apply on top of every profile
+    if current_uid == index || matches!(index, "Merge" | "Script") {
         return true;
     }
 
