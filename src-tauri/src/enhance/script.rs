@@ -146,10 +146,15 @@ fn eval_script(script: &str, config_json: &str, name: &String) -> EvalOutcome {
         return bail("Name parameter too long".to_owned());
     }
 
+    // A Promise, as an async main returns, serializes to an empty object, which would
+    // replace the whole config, so it fails the script instead.
     let code = format!(
         r"try{{
         {script};
-        JSON.stringify(main(JSON.parse(globalThis.__verge_config__),'{safe_name}')||'')
+        JSON.stringify((function(result){{
+          if(result&&typeof result.then==='function')throw new Error('main must return the config, not a Promise');
+          return result
+        }})(main(JSON.parse(globalThis.__verge_config__),'{safe_name}'))||'')
       }} catch(err) {{
         `__error_flag__ ${{err.toString()}}`
       }}"
