@@ -165,6 +165,7 @@ pub async fn quit() {
             NoticeStatus::AppQuitCoreStopFailed,
             cleanup_result.stop_error.unwrap_or_default(),
         );
+        return;
     }
 
     utils::server::shutdown_embedded_server();
