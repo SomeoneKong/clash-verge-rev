@@ -5,13 +5,17 @@ use crate::{
     config::{Config, PrfItem, PrfOption, profiles::profiles_update_item_safe},
     core::{
         CoreManager, handle, tray,
-        validate::{ValidationOutcome, ValidationSkipReason},
+        validate::{ValidationErrorKind, ValidationOutcome, ValidationSkipReason},
     },
-    utils::help::{mask_err, mask_url},
+    utils::{
+        dirs,
+        help::{self, mask_err, mask_url},
+    },
 };
 use anyhow::{Result, bail};
 use clash_verge_logging::{Type, logging};
 use smartstring::alias::String;
+use std::path::PathBuf;
 
 /// Toggle proxy profile
 pub async fn toggle_proxy_profile(profile_index: String) {
@@ -112,7 +116,7 @@ async fn perform_profile_update(
     opt: Option<&PrfOption>,
     option: Option<&PrfOption>,
     is_mannual_trigger: bool,
-) -> Result<()> {
+) -> Result<Option<ReplacedFile>> {
     let merged_opt = PrfOption::merge(opt, option);
     let profiles = Config::profiles().await;
     let profiles_arc = profiles.latest_arc();
@@ -183,11 +187,11 @@ async fn perform_profile_update(
     let last_err = match result {
         Ok((strategy, mut item)) => {
             // A persistence error must not replay a successful download with another transport.
-            profiles_update_item_safe(uid, &mut item).await?;
+            let replaced = save_downloaded_profile(uid, &mut item).await?;
             if !matches!(strategy, Strategy::Configured) {
                 handle::Handle::notice(NoticeStatus::UpdateWithClashProxy, profile_name.as_str());
             }
-            return Ok(());
+            return Ok(replaced);
         }
         Err(error) => error,
     };
@@ -206,9 +210,10 @@ async fn perform_profile_update(
 pub async fn update_profile(uid: &String, option: Option<&PrfOption>, is_mannual_trigger: bool) -> Result<()> {
     let url_opt = should_update_profile(uid, is_mannual_trigger).await?;
 
+    let mut replaced = None;
     let profile_persisted = match url_opt {
         Some((url, opt)) => {
-            perform_profile_update(uid, &url, opt.as_ref(), option, is_mannual_trigger).await?;
+            replaced = perform_profile_update(uid, &url, opt.as_ref(), option, is_mannual_trigger).await?;
             true
         }
         None => false,
@@ -223,6 +228,11 @@ pub async fn update_profile(uid: &String, option: Option<&PrfOption>, is_mannual
         if profile_persisted && !is_mannual_trigger {
             result = apply_saved_profile(uid, result).await;
         }
+        // the outcome is for whichever profile is current when the config is generated
+        let restored = profile_persisted
+            && rejects_content(&result)
+            && is_current_profile(uid).await
+            && restore_profile_file(replaced).await;
         match result {
             Ok(outcome) if outcome.is_valid() => announce(Refresh::Clash),
             Ok(outcome @ (ValidationOutcome::Skipped { .. } | ValidationOutcome::Busy)) if !is_mannual_trigger => {
@@ -234,7 +244,9 @@ pub async fn update_profile(uid: &String, option: Option<&PrfOption>, is_mannual
                     Err(err) => err.to_string(),
                 };
                 let message = mask_err(&message);
-                let message = if profile_persisted {
+                let message = if restored {
+                    format!("订阅新内容未通过校验，已保留原订阅: {message}")
+                } else if profile_persisted {
                     format!("订阅已保存，但未能确认已应用到内核: {message}")
                 } else {
                     message
@@ -249,8 +261,73 @@ pub async fn update_profile(uid: &String, option: Option<&PrfOption>, is_mannual
     Ok(())
 }
 
+/// A subscription file an update replaced, with what the update wrote over it.
+struct ReplacedFile {
+    path: PathBuf,
+    previous: String,
+    written: String,
+}
+
+/// Saves a downloaded subscription, keeping the content it replaces.
+async fn save_downloaded_profile(uid: &String, item: &mut PrfItem) -> Result<Option<ReplacedFile>> {
+    let _profile_write = crate::config::profiles::PROFILE_WRITE_LOCK.lock().await;
+    let previous = saved_profile_file(uid).await;
+    let written = item.file_data.clone();
+    profiles_update_item_safe(uid, item).await?;
+    Ok(previous.zip(written).map(|((path, previous), written)| ReplacedFile {
+        path,
+        previous,
+        written,
+    }))
+}
+
 async fn is_current_profile(uid: &String) -> bool {
     Config::profiles().await.latest_arc().current.as_ref() == Some(uid)
+}
+
+/// The file a subscription is saved in, with its content.
+async fn saved_profile_file(uid: &String) -> Option<(PathBuf, String)> {
+    let file = Config::profiles().await.latest_arc().get_item(uid).ok()?.file.clone()?;
+    let path = dirs::app_profiles_dir().ok()?.join(file.as_str());
+    let content = tokio::fs::read_to_string(&path).await.ok()?;
+    Some((path, content.into()))
+}
+
+/// A download can bring content the core rejects, such as an empty or invalid node list,
+/// which would replace the working copy and leave no proxies after the next restart.
+const fn rejects_content(result: &Result<ValidationOutcome>) -> bool {
+    matches!(
+        result,
+        Ok(ValidationOutcome::Invalid {
+            kind: ValidationErrorKind::YamlSyntax
+                | ValidationErrorKind::YamlMapping
+                | ValidationErrorKind::CoreRejected,
+            ..
+        })
+    )
+}
+
+async fn restore_profile_file(replaced: Option<ReplacedFile>) -> bool {
+    let Some(ReplacedFile {
+        path,
+        previous,
+        written,
+    }) = replaced
+    else {
+        return false;
+    };
+    let _profile_write = crate::config::profiles::PROFILE_WRITE_LOCK.lock().await;
+    // another update or an edit has replaced the content since
+    if tokio::fs::read_to_string(&path).await.ok().as_deref() != Some(written.as_str()) {
+        return false;
+    }
+    match help::save_yaml_str(&path, &previous).await {
+        Ok(()) => true,
+        Err(err) => {
+            logging!(error, Type::Config, "[订阅更新] 恢复原订阅失败: {err:#}");
+            false
+        }
+    }
 }
 
 const APPLY_SAVED_PROFILE_ATTEMPTS: usize = 60;
