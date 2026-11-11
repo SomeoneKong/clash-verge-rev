@@ -13,8 +13,54 @@ use clash_verge_logging::{Type, logging};
 use reqwest_dav::list_cmd::ListFile;
 use serde::Serialize;
 use smartstring::alias::String;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
+
+/// Where a WebDAV backup is downloaded to before it is restored.
+const WEBDAV_RESTORE_FILE: &str = ".webdav-restore.zip";
+/// Where a backup is extracted to before it replaces the current files.
+const RESTORE_STAGING_DIR: &str = ".restore-staging";
+
+/// A backup is named by a plain file name: a name from a WebDAV listing or from the
+/// frontend must not reach outside the backup directory, as `..\` does on Windows.
+fn backup_file_name(filename: &str) -> Result<&str> {
+    let plain = !filename.is_empty() && filename != "." && filename != ".." && !filename.contains(['/', '\\', ':']);
+    if plain {
+        Ok(filename)
+    } else {
+        Err(anyhow!("Invalid backup file name: {filename}"))
+    }
+}
+
+/// Extracts a backup into a staging directory first, so a damaged archive fails
+/// before any file of the current configuration is replaced.
+fn extract_backup(zip: &mut zip::ZipArchive<std::fs::File>) -> Result<()> {
+    let home = app_home_dir()?;
+    let staging = home.join(RESTORE_STAGING_DIR);
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging)?;
+    }
+    let result = zip
+        .extract(&staging)
+        .map_err(anyhow::Error::from)
+        .and_then(|()| move_into(&staging, &home));
+    let _ = std::fs::remove_dir_all(&staging);
+    result
+}
+
+fn move_into(from: &Path, to: &Path) -> Result<()> {
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            std::fs::create_dir_all(&target)?;
+            move_into(&entry.path(), &target)?;
+        } else {
+            std::fs::rename(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Serialize, specta::Type)]
 pub struct LocalBackupFile {
@@ -122,6 +168,7 @@ pub async fn list_wevdav_backup() -> Result<Vec<ListFile>> {
 }
 
 pub async fn delete_webdav_backup(filename: String) -> Result<()> {
+    backup_file_name(&filename)?;
     let name = filename.to_string();
     backup::WebDavClient::global().delete(filename).await.map_err(|err| {
         logging!(
@@ -135,6 +182,7 @@ pub async fn delete_webdav_backup(filename: String) -> Result<()> {
 
 #[tracing::instrument(skip_all, level = "info", fields(filename = %filename))]
 pub async fn restore_webdav_backup(filename: String) -> Result<()> {
+    backup_file_name(&filename)?;
     let verge = Config::verge().await;
     let verge_data = verge.latest_arc();
     let webdav_url = verge_data.webdav_url.clone();
@@ -143,7 +191,7 @@ pub async fn restore_webdav_backup(filename: String) -> Result<()> {
 
     let backup_storage_path = app_home_dir()
         .map_err(|e| anyhow::anyhow!("Failed to get app home dir: {e}"))?
-        .join(filename.as_str());
+        .join(WEBDAV_RESTORE_FILE);
     let name = filename.to_string();
     backup::WebDavClient::global()
         .download(filename, backup_storage_path.clone())
@@ -161,10 +209,11 @@ pub async fn restore_webdav_backup(filename: String) -> Result<()> {
     let file = AsyncHandler::spawn_blocking(move || std::fs::File::open(&value)).await??;
     let mut zip = zip::ZipArchive::new(file)?;
     let _profile_write = crate::config::profiles::PROFILE_WRITE_LOCK.lock().await;
-    zip.extract(app_home_dir()?)?;
-    let res = finalize_restored_verge_config(webdav_url, webdav_username, webdav_password).await;
+    let res = extract_backup(&mut zip);
+    drop(zip);
     let _ = backup_storage_path.remove_if_exists().await;
-    res
+    res?;
+    finalize_restored_verge_config(webdav_url, webdav_username, webdav_password).await
 }
 
 pub async fn create_local_backup() -> Result<()> {
@@ -314,7 +363,7 @@ pub async fn list_local_backup() -> Result<Vec<LocalBackupFile>> {
 
 pub async fn delete_local_backup(filename: String) -> Result<()> {
     let backup_dir = local_backup_dir()?;
-    let target_path = backup_dir.join(filename.as_str());
+    let target_path = backup_dir.join(backup_file_name(&filename)?);
     if !target_path.exists() {
         logging!(debug, Type::Backup, "Local backup file not found: {}", filename);
         return Ok(());
@@ -326,7 +375,7 @@ pub async fn delete_local_backup(filename: String) -> Result<()> {
 #[tracing::instrument(skip_all, level = "info", fields(filename = %filename))]
 pub async fn restore_local_backup(filename: String) -> Result<()> {
     let backup_dir = local_backup_dir()?;
-    let target_path = backup_dir.join(filename.as_str());
+    let target_path = backup_dir.join(backup_file_name(&filename)?);
     if !target_path.exists() {
         return Err(anyhow!("Backup file not found: {}", filename));
     }
@@ -344,7 +393,7 @@ pub async fn restore_local_backup(filename: String) -> Result<()> {
     let file = AsyncHandler::spawn_blocking(move || std::fs::File::open(&target_path)).await??;
     let mut zip = zip::ZipArchive::new(file)?;
     let _profile_write = crate::config::profiles::PROFILE_WRITE_LOCK.lock().await;
-    zip.extract(app_home_dir()?)?;
+    extract_backup(&mut zip)?;
     finalize_restored_verge_config(webdav_url, webdav_username, webdav_password).await?;
     Ok(())
 }
@@ -352,7 +401,7 @@ pub async fn restore_local_backup(filename: String) -> Result<()> {
 #[tracing::instrument(skip_all, level = "info", fields(filename = %filename, destination = %destination))]
 pub async fn export_local_backup(filename: String, destination: String) -> Result<()> {
     let backup_dir = local_backup_dir()?;
-    let source_path = backup_dir.join(filename.as_str());
+    let source_path = backup_dir.join(backup_file_name(&filename)?);
     if !source_path.exists() {
         return Err(anyhow!("Backup file not found: {}", filename));
     }
@@ -367,4 +416,28 @@ pub async fn export_local_backup(filename: String, destination: String) -> Resul
         .map(|_| ())
         .map_err(|err| anyhow!("Failed to export backup file: {err:#}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::backup_file_name;
+
+    #[test]
+    fn backup_names_stay_in_the_backup_directory() {
+        for name in ["backup-2026.zip", "a..b.zip", "..zip"] {
+            assert!(backup_file_name(name).is_ok(), "{name}");
+        }
+        for name in [
+            "",
+            ".",
+            "..",
+            "../x.zip",
+            "..\\x.zip",
+            "dir/x.zip",
+            "C:x.zip",
+            "x.zip:stream",
+        ] {
+            assert!(backup_file_name(name).is_err(), "{name}");
+        }
+    }
 }
