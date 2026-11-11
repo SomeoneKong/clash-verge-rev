@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
-import { MihomoWebSocket } from 'tauri-plugin-mihomo-api'
+import { getConnections, MihomoWebSocket } from 'tauri-plugin-mihomo-api'
 
 const MAX_CLOSED_CONNS_NUM = 500
-const CONNECTION_UPDATE_THROTTLE_MS = 500
+const CONNECTION_POLL_INTERVAL_MS = 1_000
 const CONNECTION_RECONNECT_DELAY_MS = 1_000
 
 type ConnectionMetadata = IConnectionsItem['metadata']
@@ -38,9 +38,8 @@ const initConnSummaryData: ConnectionSummaryData = {
 
 let connectionData: ConnectionMonitorData = initConnData
 let connectionSummary: ConnectionSummaryData = initConnSummaryData
-let flushTimer: ReturnType<typeof setTimeout> | null = null
-let pendingMessageData: string | null = null
-let lastFlushAt = 0
+// when the snapshot that rates are measured from was taken, 0 once polling stops
+let lastSnapshotAt = 0
 
 const connectionListeners = new Set<ConnectionListener>()
 const summaryListeners = new Set<ConnectionListener>()
@@ -100,16 +99,24 @@ const normalizeChains = (chains: string[], previous?: string[]) => {
   return chains.slice()
 }
 
+const bytesPerSecond = (bytes: number, elapsedMs: number) =>
+  elapsedMs > 0 ? Math.round((bytes * 1000) / elapsedMs) : 0
+
 const normalizeConnection = (
   connection: IConnectionsItem,
-  previous?: IConnectionsItem,
+  previous: IConnectionsItem | undefined,
+  elapsedMs: number,
 ): IConnectionsItem => {
   const metadata = normalizeMetadata(connection.metadata, previous?.metadata)
   const chains = normalizeChains(connection.chains || [], previous?.chains)
   const upload = connection.upload ?? 0
   const download = connection.download ?? 0
-  const curUpload = previous ? upload - previous.upload : 0
-  const curDownload = previous ? download - previous.download : 0
+  const curUpload = previous
+    ? bytesPerSecond(upload - previous.upload, elapsedMs)
+    : 0
+  const curDownload = previous
+    ? bytesPerSecond(download - previous.download, elapsedMs)
+    : 0
   const rule = connection.rule || ''
   const rulePayload = connection.rulePayload || ''
   const start = connection.start || ''
@@ -145,7 +152,8 @@ const normalizeConnection = (
 
 const mergeConnectionSnapshot = (
   payload: IConnections,
-  previous: ConnectionMonitorData = initConnData,
+  previous: ConnectionMonitorData,
+  elapsedMs: number,
 ): ConnectionMonitorData => {
   const nextConnections = payload.connections ?? []
   const previousActive = previous.activeConnections ?? []
@@ -162,7 +170,9 @@ const mergeConnectionSnapshot = (
     const connection = nextConnections[i]
     const previousConnection = previousActiveById.get(connection.id)
     if (previousConnection) previousActiveById.delete(connection.id)
-    activeConnections.push(normalizeConnection(connection, previousConnection))
+    activeConnections.push(
+      normalizeConnection(connection, previousConnection, elapsedMs),
+    )
   }
 
   if (previousActiveById.size === 0) {
@@ -211,47 +221,71 @@ const mergeConnectionSummary = (
   activeConnectionCount: payload.count ?? 0,
 })
 
-const flushPendingMessage = () => {
-  flushTimer = null
-  const messageData = pendingMessageData
-  pendingMessageData = null
-  if (!messageData || connectionListeners.size === 0) return
-
-  let payload: IConnections
-  try {
-    payload = JSON.parse(messageData) as IConnections
-  } catch (err) {
-    console.error('[Connections] Failed to parse websocket payload', err)
-    return
-  }
-
-  lastFlushAt = Date.now()
-
-  connectionData = mergeConnectionSnapshot(payload, connectionData)
+const applyConnectionSnapshot = (payload: IConnections) => {
+  const now = Date.now()
+  const elapsedMs = lastSnapshotAt ? now - lastSnapshotAt : 0
+  lastSnapshotAt = now
+  connectionData = mergeConnectionSnapshot(payload, connectionData, elapsedMs)
   notifyConnectionListeners()
 }
 
-const enqueueConnectionMessage = (messageData: string) => {
-  pendingMessageData = messageData
-  if (flushTimer) return
+// The full snapshot is pulled one request at a time rather than taken from the
+// pushed stream: a push keeps coming however slowly the webview takes it in, and
+// the large messages pile up in the app process meanwhile, as when the window is
+// minimized or busy.
+const createConnectionPoller = () => {
+  let generation = 0
+  // a request of any generation is in flight
+  let polling = false
+  let pollTimer: ReturnType<typeof setTimeout> | null = null
+  const hasSubscribers = () => connectionListeners.size > 0
 
-  const elapsed = Date.now() - lastFlushAt
-  if (elapsed >= CONNECTION_UPDATE_THROTTLE_MS) {
-    flushPendingMessage()
-    return
+  const schedulePoll = (current: number) => {
+    if (current !== generation || !hasSubscribers() || pollTimer) return
+    pollTimer = window.setTimeout(() => {
+      pollTimer = null
+      void poll(current)
+    }, CONNECTION_POLL_INTERVAL_MS)
   }
 
-  flushTimer = window.setTimeout(
-    flushPendingMessage,
-    CONNECTION_UPDATE_THROTTLE_MS - elapsed,
-  )
-}
+  const poll = async (current: number) => {
+    if (current !== generation || !hasSubscribers()) return
+    polling = true
+    try {
+      const { uploadTotal, downloadTotal, connections } = await getConnections()
+      if (current === generation && hasSubscribers()) {
+        applyConnectionSnapshot({
+          uploadTotal,
+          downloadTotal,
+          // the plugin serializes its enums, typed as unions, as plain strings
+          connections: (connections ?? []) as unknown as IConnectionsItem[],
+        })
+      }
+    } catch (err) {
+      console.warn('[Connections] Failed to fetch connections', err)
+    } finally {
+      polling = false
+      // subscribed again while this request of a stopped generation was running
+      if (current === generation) schedulePoll(current)
+      else void poll(generation)
+    }
+  }
 
-const clearPendingMessage = () => {
-  pendingMessageData = null
-  if (flushTimer) {
-    window.clearTimeout(flushTimer)
-    flushTimer = null
+  return {
+    start: () => {
+      if (polling || pollTimer) return
+      void poll(generation)
+    },
+    stopIfIdle: () => {
+      if (hasSubscribers()) return
+      // a request still in flight belongs to the old generation and is dropped
+      generation += 1
+      if (pollTimer) {
+        window.clearTimeout(pollTimer)
+        pollTimer = null
+      }
+      lastSnapshotAt = 0
+    },
   }
 }
 
@@ -265,9 +299,8 @@ const createSocketSupervisor = (options: {
   connectSocket: () => Promise<MihomoWebSocket>
   onText: (data: string) => void
   closeLogLabel: string
-  onIdle?: () => void
 }): SocketSupervisor => {
-  const { listeners, connectSocket, onText, closeLogLabel, onIdle } = options
+  const { listeners, connectSocket, onText, closeLogLabel } = options
   const hasSubscribers = () => listeners.size > 0
   let socket: MihomoWebSocket | null = null
   let connecting = false
@@ -334,6 +367,8 @@ const createSocketSupervisor = (options: {
       scheduleReconnect()
     } finally {
       connecting = false
+      // subscribers may have come back while this attempt was closing its socket
+      if (!socket) scheduleReconnect()
     }
   }
 
@@ -344,7 +379,6 @@ const createSocketSupervisor = (options: {
     stopIfIdle: () => {
       if (hasSubscribers()) return
 
-      onIdle?.()
       clearReconnectTimer()
       void closeSocket()
     },
@@ -367,13 +401,7 @@ const handleSummaryText = (messageData: string) => {
   notifySummaryListeners()
 }
 
-const connectionSupervisor = createSocketSupervisor({
-  listeners: connectionListeners,
-  connectSocket: () => MihomoWebSocket.connect_connections(),
-  onText: enqueueConnectionMessage,
-  closeLogLabel: 'connection',
-  onIdle: clearPendingMessage,
-})
+const connectionPoller = createConnectionPoller()
 
 const summarySupervisor = createSocketSupervisor({
   listeners: summaryListeners,
@@ -387,10 +415,10 @@ const getConnectionSummarySnapshot = () => connectionSummary
 
 const subscribeConnectionData = (listener: ConnectionListener) => {
   connectionListeners.add(listener)
-  connectionSupervisor.start()
+  connectionPoller.start()
   return () => {
     connectionListeners.delete(listener)
-    connectionSupervisor.stopIfIdle()
+    connectionPoller.stopIfIdle()
   }
 }
 
