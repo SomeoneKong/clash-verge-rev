@@ -89,8 +89,10 @@ const createSharedSubscriptionEntry = (
     if (entry.closed || entry.connecting || entry.ws) return
 
     entry.connecting = true
+    let candidate: MihomoWebSocket | null = null
     try {
       const ws = await connect()
+      candidate = ws
       if (entry.closed) {
         await ws.close()
         return
@@ -114,6 +116,10 @@ const createSharedSubscriptionEntry = (
       entry.ws = ws
       clearReconnectTimer()
     } catch (ignoreError) {
+      // connected, but setting it up failed before the entry took it over
+      if (candidate && entry.ws !== candidate) {
+        void candidate.close().catch(() => {})
+      }
       if (!entry.closed && !entry.ws) {
         clearReconnectTimer()
         entry.reconnectTimer = setTimeout(entry.connectWs, RECONNECT_DELAY_MS)
