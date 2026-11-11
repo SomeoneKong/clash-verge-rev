@@ -8,7 +8,7 @@ use crate::{
         CoreManager, handle,
         validate::{CoreConfigValidator, ValidationOutcome},
     },
-    utils::dirs,
+    utils::{dirs, help},
 };
 use clash_verge_logging::{Type, logging};
 use smartstring::alias::String;
@@ -70,7 +70,7 @@ pub async fn save_profile_file(
     };
 
     // 保存新的配置文件
-    fs::write(&file_path, &file_data).await.stringify_err()?;
+    help::save_yaml_str(&file_path, &file_data).await.stringify_err()?;
 
     let changes_applied = handle_saved_profile_file(
         &file_path_str,
@@ -98,7 +98,7 @@ async fn restore_original(
     original_existed: bool,
 ) -> CmdResult<()> {
     if original_existed {
-        fs::write(file_path, original_content).await.stringify_err()
+        help::save_yaml_str(file_path, original_content).await.stringify_err()
     } else {
         fs::remove_file(file_path).await.stringify_err()
     }
