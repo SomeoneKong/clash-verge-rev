@@ -70,23 +70,26 @@ jobs:
           pnpm release-version "${GITHUB_REF_NAME}"
           pnpm run prebuild ${{ matrix.target }}
 
-      # Without the upstream keys: no updater artifacts, and an ad-hoc signature
-      # so the macOS bundle is sealed.
+      # Updater artifacts are signed with the fork's key; the macOS bundle gets an
+      # ad-hoc signature so it is sealed.
       - name: Build
         shell: bash
         env:
           NODE_OPTIONS: '--max_old_space_size=4096'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          echo '{"bundle":{"createUpdaterArtifacts":false,"macOS":{"signingIdentity":"-"}}}' > "${RUNNER_TEMP}/fork.conf.json"
+          echo '{"bundle":{"macOS":{"signingIdentity":"-"}}}' > "${RUNNER_TEMP}/fork.conf.json"
           pnpm tauri build --target ${{ matrix.target }} --config "${RUNNER_TEMP}/fork.conf.json" ${{ matrix.args }}
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: |
-            target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe
+            target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe*
             target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            target/${{ matrix.target }}/release/bundle/deb/*.deb
+            target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz*
+            target/${{ matrix.target }}/release/bundle/deb/*.deb*
           if-no-files-found: error
 
   release:
@@ -129,23 +132,54 @@ jobs:
           path: artifacts/
 
       # GitHub turns the spaces in asset names into dots; rename first so the
-      # checksums match the published names.
+      # checksums match the published names. The macOS app archive carries
+      # neither version nor architecture, which its artifact directory gives.
       - name: Collect assets
         run: |
           mkdir assets
           find artifacts -type f | while IFS= read -r f; do
-            mv "$f" "assets/$(basename "$f" | tr ' ' '.')"
+            name="$(basename "$f" | tr ' ' '.')"
+            case "$name" in
+              Clash.Verge.app.tar.gz*)
+                target="${f#artifacts/}"
+                name="Clash.Verge_${GITHUB_REF_NAME#v}_${target%%-*}${name#Clash.Verge}"
+                ;;
+            esac
+            mv "$f" "assets/${name}"
           done
+          node scripts/fork-update-json.mjs assets "${GITHUB_REF_NAME}" release.md
           cp scripts/fork-install-linux.sh assets/install-linux.sh
           cd assets
           sha256sum * > checksums.txt
           cat checksums.txt
 
+      # The app reads update.json from the fixed `updater` release. A test release
+      # is a pre-release, so it is not what "latest" downloads point to.
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          TEST_RELEASE: ${{ vars.FORK_TEST_RELEASE }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" assets/* \
-            --verify-tag \
-            --title "Clash Verge Rev ${GITHUB_REF_NAME}" \
-            --notes-file release.md
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            # a re-run replaces all assets, so update.json signs what the release holds
+            gh release upload "${GITHUB_REF_NAME}" assets/* --clobber
+          else
+            flags=()
+            [ "${TEST_RELEASE}" = "true" ] && flags+=(--prerelease)
+            gh release create "${GITHUB_REF_NAME}" assets/* \
+              --verify-tag \
+              --title "Clash Verge Rev ${GITHUB_REF_NAME}" \
+              --notes-file release.md \
+              "${flags[@]}"
+          fi
+          gh release view updater >/dev/null 2>&1 ||
+            gh release create updater --prerelease --title "Update feed" \
+              --notes "update.json of the newest fork release, read by the app's updater."
+          # a run that finishes after a newer release's must not take the feed back
+          current="$(gh release download updater -p update.json -O - 2>/dev/null | jq -r '.version // empty')" || current=""
+          version="$(jq -r .version assets/update.json)"
+          if [ -n "$current" ] && [ "$(printf '%s\n' "$current" "$version" | sort -V | tail -n 1)" != "$version" ]; then
+            echo "The feed already offers $current, newer than $version."
+          else
+            gh release upload updater assets/update.json --clobber
+          fi
