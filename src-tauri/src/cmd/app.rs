@@ -63,12 +63,16 @@ pub async fn install_update(
     on_event: Channel<DownloadEvent>,
 ) -> CmdResult<bool> {
     let version: String = version.into();
-    SilentUpdater::global()
+    let installed = SilentUpdater::global()
         .install_update(&app_handle, &version, |event| {
             let _ = on_event.send(event);
         })
         .await
-        .stringify_err()
+        .stringify_err()?;
+    if installed {
+        feat::restart_after_update().await;
+    }
+    Ok(installed)
 }
 
 #[tauri::command]
