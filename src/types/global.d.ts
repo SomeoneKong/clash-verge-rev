@@ -189,6 +189,7 @@ interface IConnectionsItem {
   download: number
   start: string
   chains: string[]
+  dialerChains?: string[][] // the chains each dialer-proxy layer reaches the node through
   rule: string
   rulePayload: string
   curUpload?: number // upload speed, calculate at runtime

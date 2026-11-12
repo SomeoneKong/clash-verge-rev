@@ -116,6 +116,7 @@ const sameStaticConnection = (
 ) =>
   left.metadata === right.metadata &&
   left.chains === right.chains &&
+  left.dialerChains === right.dialerChains &&
   left.rule === right.rule &&
   left.rulePayload === right.rulePayload &&
   left.start === right.start
@@ -157,7 +158,7 @@ const createTableRowSnapshot = (
     chainsText:
       sameStatic && previous
         ? previous.chainsText
-        : formatConnectionChains(row.chains),
+        : formatConnectionChains(row.chains, row.dialerChains),
     ruleText:
       sameStatic && previous ? previous.ruleText : getConnectionRule(row),
     typeLabel:
@@ -232,7 +233,7 @@ const getConnectionSortKey = (field: ColumnField, row: IConnectionsItem) => {
     case 'ulSpeed':
       return row.curUpload ?? 0
     case 'chains':
-      return formatConnectionChains(row.chains)
+      return formatConnectionChains(row.chains, row.dialerChains)
     case 'rule':
       return getConnectionRule(row)
     case 'process':
