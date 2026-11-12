@@ -90,3 +90,5 @@ tray:
     systemProxy: Системный прокси
     tun: TUN
     profile: Профиль
+forkUpdater:
+  componentInstallPrompt: Для установки компонента обновления Clash Verge один раз требуются права администратора; последующие обновления не будут их запрашивать.

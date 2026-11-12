@@ -90,3 +90,5 @@ tray:
     systemProxy: Systemproxy
     tun: TUN
     profile: Profil
+forkUpdater:
+  componentInstallPrompt: Die Installation der Clash-Verge-Updatekomponente erfordert einmalig Administratorrechte; spätere Updates fragen nicht mehr danach.
