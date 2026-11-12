@@ -99,6 +99,21 @@ const normalizeChains = (chains: string[], previous?: string[]) => {
   return chains.slice()
 }
 
+const normalizeDialerChains = (
+  layers: string[][] | undefined,
+  previous?: string[][],
+) => {
+  if (!layers?.length) return undefined
+  if (
+    previous &&
+    previous.length === layers.length &&
+    previous.every((chain, i) => sameChains(chain, layers[i]))
+  ) {
+    return previous
+  }
+  return layers.map((chain) => chain.slice())
+}
+
 const bytesPerSecond = (bytes: number, elapsedMs: number) =>
   elapsedMs > 0 ? Math.round((bytes * 1000) / elapsedMs) : 0
 
@@ -109,6 +124,10 @@ const normalizeConnection = (
 ): IConnectionsItem => {
   const metadata = normalizeMetadata(connection.metadata, previous?.metadata)
   const chains = normalizeChains(connection.chains || [], previous?.chains)
+  const dialerChains = normalizeDialerChains(
+    connection.dialerChains,
+    previous?.dialerChains,
+  )
   const upload = connection.upload ?? 0
   const download = connection.download ?? 0
   const curUpload = previous
@@ -125,6 +144,7 @@ const normalizeConnection = (
     previous &&
     previous.metadata === metadata &&
     previous.chains === chains &&
+    previous.dialerChains === dialerChains &&
     previous.upload === upload &&
     previous.download === download &&
     previous.curUpload === curUpload &&
@@ -143,6 +163,7 @@ const normalizeConnection = (
     download,
     start,
     chains,
+    dialerChains,
     rule,
     rulePayload,
     curUpload,
