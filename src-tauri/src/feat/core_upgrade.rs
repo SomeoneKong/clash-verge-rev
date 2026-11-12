@@ -41,6 +41,7 @@ pub struct CoreUpgradeReport {
 }
 
 pub async fn upgrade_core(force: bool) -> Result<CoreUpgradeReport> {
+    let _update_gate = crate::core::fork_updater::exclusive()?;
     let _serialized = UPGRADE_LOCK.lock().await;
     let core = Config::verge().await.latest_arc().get_valid_clash_core();
     tracing::Span::current().record("core", tracing::field::display(&core));

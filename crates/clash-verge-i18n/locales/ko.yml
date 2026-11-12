@@ -90,3 +90,5 @@ tray:
     systemProxy: 시스템 프록시
     tun: TUN
     profile: 프로필
+forkUpdater:
+  componentInstallPrompt: Clash Verge 업데이트 구성 요소를 설치하려면 관리자 권한이 한 번 필요합니다. 이후 업데이트에서는 다시 묻지 않습니다.

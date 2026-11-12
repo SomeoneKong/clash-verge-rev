@@ -90,3 +90,5 @@ tray:
     systemProxy: پروکسی سیستم
     tun: TUN
     profile: پروفایل
+forkUpdater:
+  componentInstallPrompt: نصب مؤلفه به‌روزرسانی Clash Verge یک بار به دسترسی مدیر نیاز دارد؛ به‌روزرسانی‌های بعدی دیگر آن را درخواست نمی‌کنند.

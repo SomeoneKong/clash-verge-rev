@@ -808,6 +808,10 @@ pub fn stage_approved_core(core_path: &Path) -> Result<()> {
 
 /// Dispatches a privileged platform operation on a blocking thread.
 pub(crate) fn run_privileged_service_action(action: PendingAction) -> Result<()> {
+    anyhow::ensure!(
+        !crate::core::fork_updater::update_in_progress(),
+        "an app update is in progress"
+    );
     let (operation, label): (fn() -> Result<()>, &'static str) = match action {
         PendingAction::Install => (install_service, "install service"),
         PendingAction::Uninstall => (uninstall_service, "uninstall service"),

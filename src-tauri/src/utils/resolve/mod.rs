@@ -54,6 +54,7 @@ pub(crate) fn resolve_setup_async() {
 #[tracing::instrument(skip_all, level = "info")]
 async fn resolve_setup() {
     logging!(info, Type::ClashVergeRev, "Version: {}", env!("CARGO_PKG_VERSION"));
+    crate::core::fork_updater::resolve_at_startup().await;
 
     // Migrate before windows or timers can change the loaded config.
     logging_error!(Type::Setup, init::migrate_short_update_intervals().await);
@@ -95,6 +96,7 @@ async fn resolve_setup() {
     Handle::refresh_clash();
     refresh_tray_menu().await;
     resolve_done();
+    crate::core::fork_updater::show_after_update().await;
 }
 
 pub async fn resolve_reset_async() -> Result<(), anyhow::Error> {

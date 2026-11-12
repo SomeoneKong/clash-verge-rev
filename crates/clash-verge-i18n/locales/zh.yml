@@ -90,3 +90,5 @@ tray:
     systemProxy: 系统代理
     tun: TUN
     profile: 订阅
+forkUpdater:
+  componentInstallPrompt: 安装 Clash Verge 更新组件需要一次管理员权限，之后的更新不再需要授权

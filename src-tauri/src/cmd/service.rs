@@ -19,6 +19,8 @@ pub enum ServiceInstallOutcome {
 }
 
 async fn execute_service_operation_sync(status: ServiceStatus, error_code: &str) -> CmdResult<ServiceInstallOutcome> {
+    let _update_gate =
+        crate::core::fork_updater::exclusive().map_err(|error| proxy_aware_coded_error(&error, error_code))?;
     let manager = CoreManager::global();
     let result = {
         let _lifecycle = manager.lifecycle_lock.lock().await;
@@ -90,6 +92,8 @@ pub async fn install_service() -> CmdResult<ServiceInstallOutcome> {
 #[tauri::command]
 #[specta::specta]
 pub async fn uninstall_service() -> CmdResult {
+    let _update_gate = crate::core::fork_updater::exclusive()
+        .map_err(|error| proxy_aware_coded_error(&error, "SERVICE_UNINSTALL_FAILED"))?;
     CoreManager::global()
         .uninstall_service_and_start_sidecar()
         .await

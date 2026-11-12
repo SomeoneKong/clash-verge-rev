@@ -90,3 +90,5 @@ tray:
     systemProxy: Системалы прокси
     tun: TUN
     profile: Профиль
+forkUpdater:
+  componentInstallPrompt: Clash Verge яңарту компонентын урнаштыру өчен бер тапкыр администратор хокуклары кирәк; киләсе яңартулар аны кабат сорамаячак.

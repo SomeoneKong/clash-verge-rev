@@ -290,7 +290,7 @@ fn download_sources(url: &tauri::Url) -> Vec<tauri::Url> {
 
 /// Tries every source with a throughput floor, then again stopping only on a stall, so a link
 /// that is slow everywhere still finishes.
-async fn download(update: &Update, on_event: impl Fn(DownloadEvent) + Sync) -> Result<Vec<u8>> {
+pub(super) async fn download(update: &Update, on_event: impl Fn(DownloadEvent) + Sync) -> Result<Vec<u8>> {
     let sources = download_sources(&update.download_url);
     let mut last_error = None;
     for floor in [MIN_PROGRESS, 1] {
@@ -359,12 +359,30 @@ impl SilentUpdater {
         Ok(updater_builder.build()?.check().await?)
     }
 
-    async fn install(update: Update, bytes: Vec<u8>) -> Result<()> {
-        Ok(tokio::task::spawn_blocking(move || update.install(&bytes)).await??)
+    /// The gate goes with the installation, which may outlast a caller that stops waiting.
+    async fn install(update: Update, bytes: Vec<u8>, gate: tokio::sync::MutexGuard<'static, ()>) -> Result<()> {
+        Ok(tokio::task::spawn_blocking(move || {
+            let _gate = gate;
+            update.install(&bytes)
+        })
+        .await??)
     }
 
     /// Installs a newer cached update before normal startup, if the user confirms.
     pub async fn try_install_on_startup(&self, app_handle: &tauri::AppHandle) -> bool {
+        // With the update component, updates are applied from the update dialog only.
+        if super::fork_updater::available().await {
+            Self::delete_cache();
+            return false;
+        }
+        // An update the component was applying, or a state that cannot be read, rules out
+        // installing another way now; the cache stays for a later start.
+        if super::fork_updater::update_in_progress() {
+            return false;
+        }
+        let Ok(gate) = super::fork_updater::take_gate() else {
+            return false;
+        };
         if !Config::verge().await.latest_arc().auto_check_update.unwrap_or(true) {
             Self::delete_cache();
             return false;
@@ -436,7 +454,7 @@ impl SilentUpdater {
         Self::show_update_splash(app_handle, &version);
 
         // `install()` may hang (#2558); on Windows NSIS can take over without returning.
-        let install = tokio::time::timeout(std::time::Duration::from_secs(30), Self::install(update, bytes));
+        let install = tokio::time::timeout(std::time::Duration::from_secs(30), Self::install(update, bytes, gate));
         match install
             .await
             .unwrap_or_else(|_| Err(anyhow::anyhow!("install timed out (30s)")))
@@ -460,16 +478,69 @@ impl SilentUpdater {
 
     /// Installs `version` for the update dialog, reusing the cache when it holds that version;
     /// `false` when cancelled before the installer starts.
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn install_update(
         &self,
         app_handle: &tauri::AppHandle,
         version: &str,
         on_event: impl Fn(DownloadEvent) + Sync,
     ) -> Result<bool> {
+        // App updates, core upgrades and service changes take turns, whichever way this installs;
+        // the gate is held to the end, or handed to the installation.
+        let gate = super::fork_updater::take_gate()?;
         let cancel = CancellationToken::new();
         *self.manual_cancel.lock() = Some(cancel.clone());
+
+        let checked = tokio::select! {
+            checked = Self::check(app_handle) => Some(checked),
+            () = cancel.cancelled() => None,
+        };
+        let update = match checked.transpose() {
+            Ok(Some(Some(update))) if update.version == version => update,
+            Ok(Some(_)) => {
+                self.manual_cancel.lock().take();
+                anyhow::bail!("v{version} is no longer offered");
+            }
+            Ok(None) => {
+                self.manual_cancel.lock().take();
+                logging!(info, Type::System, "Update v{version} cancelled");
+                return Ok(false);
+            }
+            Err(error) => {
+                self.manual_cancel.lock().take();
+                return Err(error);
+            }
+        };
+
+        // Set before installing: a full update or the Windows installer leaves without returning.
+        let show = super::fork_updater::ShowAfterUpdate::ask();
+        match super::fork_updater::install(&update, &on_event, &cancel).await {
+            Ok(super::fork_updater::Outcome::Applied) => {
+                self.manual_cancel.lock().take();
+                Self::delete_cache();
+                show.keep();
+                return Ok(true);
+            }
+            Ok(super::fork_updater::Outcome::Cancelled) => {
+                self.manual_cancel.lock().take();
+                logging!(info, Type::System, "Update v{version} cancelled");
+                return Ok(false);
+            }
+            Ok(super::fork_updater::Outcome::Fallback(reason)) => {
+                logging!(
+                    info,
+                    Type::System,
+                    "Installing v{version} with the app's own updater: {reason}"
+                );
+            }
+            Err(error) => {
+                self.manual_cancel.lock().take();
+                return Err(error);
+            }
+        }
+
         let prepared = tokio::select! {
-            prepared = Self::prepare_install(app_handle, version, on_event) => Some(prepared),
+            prepared = Self::prepare_install(app_handle, update, on_event) => Some(prepared),
             () = cancel.cancelled() => None,
         };
         // `cancel_download` cancels under the lock, so once the token is taken back its state is
@@ -481,20 +552,17 @@ impl SilentUpdater {
         };
 
         logging!(info, Type::System, "Installing update v{version}...");
-        Self::install(update, bytes).await?;
+        Self::install(update, bytes, gate).await?;
         Self::delete_cache();
+        show.keep();
         Ok(true)
     }
 
     async fn prepare_install(
         app_handle: &tauri::AppHandle,
-        version: &str,
+        update: Update,
         on_event: impl Fn(DownloadEvent) + Sync,
     ) -> Result<(Update, Vec<u8>)> {
-        let update = Self::check(app_handle)
-            .await?
-            .filter(|update| update.version == version)
-            .with_context(|| format!("v{version} is no longer offered"))?;
         let bytes = match Self::verified_cache(app_handle, &update) {
             Some(bytes) => bytes,
             None => download(&update, on_event).await?,
@@ -672,6 +740,15 @@ impl SilentUpdater {
             super::handle::Handle::notice(
                 super::notify::NoticeStatus::Info,
                 format!("New version v{version} contains breaking changes. Please update manually."),
+            );
+            return Ok(());
+        }
+
+        if super::fork_updater::available().await {
+            logging!(
+                info,
+                Type::System,
+                "Silent updater: v{version} available, applied through the update component from the dialog"
             );
             return Ok(());
         }
