@@ -174,7 +174,7 @@ pub fn is_build_to_stable(current: &str, remote: &str) -> bool {
     !build.is_empty() && !base.contains('-') && base == remote.trim_start_matches('v')
 }
 
-/// Compares numeric version components after stripping version suffixes.
+/// Compares numeric version components, then pre-release identifiers as semver orders them.
 fn version_lte(a: &str, b: &str) -> bool {
     let parse = |v: &str| -> Vec<u64> {
         v.trim_start_matches('v')
@@ -200,7 +200,42 @@ fn version_lte(a: &str, b: &str) -> bool {
             return false;
         }
     }
-    true // equal
+    pre_release_lte(a, b)
+}
+
+/// `2.5.10-custom.2 < 2.5.10-custom.10 < 2.5.10`, as semver orders pre-releases.
+fn pre_release_lte(a: &str, b: &str) -> bool {
+    use std::cmp::Ordering;
+
+    let pre_release = |v: &str| -> Option<String> {
+        let v = v.split('+').next().unwrap_or_default();
+        v.split_once('-').map(|(_, pre)| pre.to_owned())
+    };
+    let (a, b) = match (pre_release(a), pre_release(b)) {
+        (_, None) => return true,
+        (None, Some(_)) => return false,
+        (Some(a), Some(b)) => (a, b),
+    };
+    let mut a = a.split('.');
+    let mut b = b.split('.');
+    loop {
+        let (x, y) = match (a.next(), b.next()) {
+            (None, _) => return true,
+            (Some(_), None) => return false,
+            (Some(x), Some(y)) => (x, y),
+        };
+        // Numeric identifiers have no leading zeros, so the longer one is the larger.
+        let numeric = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
+        let order = match (numeric(x), numeric(y)) {
+            (true, true) => x.len().cmp(&y.len()).then_with(|| x.cmp(y)),
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            (false, false) => x.cmp(y),
+        };
+        if order != Ordering::Equal {
+            return order == Ordering::Less;
+        }
+    }
 }
 
 /// Maps UI language to one of the three NSIS translations, defaulting to English.
