@@ -90,3 +90,5 @@ tray:
     systemProxy: وكيل النظام
     tun: TUN
     profile: ملف تعريفي
+forkUpdater:
+  componentInstallPrompt: يتطلب تثبيت مكوّن التحديث في Clash Verge صلاحيات المسؤول مرة واحدة؛ ولن تطلبها التحديثات اللاحقة مرة أخرى.

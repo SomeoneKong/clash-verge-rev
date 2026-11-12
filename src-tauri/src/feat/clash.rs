@@ -99,6 +99,24 @@ pub async fn restart_after_update() {
     handle::Handle::app_handle().restart();
 }
 
+/// Leaves for an installer the update component runs, which starts the new app once it is done.
+/// A core under the service keeps running; a sidecar core goes with the app.
+pub async fn exit_for_update() -> ! {
+    handle::Handle::global().set_is_exiting();
+    Config::apply_all_and_save_file().await;
+    if matches!(
+        *CoreManager::global().get_running_mode(),
+        crate::core::manager::RunningMode::Service
+    ) {
+        logging!(info, Type::System, "Leaving for the installer, the core keeps running");
+        utils::server::shutdown_embedded_server();
+    } else {
+        logging!(info, Type::System, "Leaving for the installer");
+        clean_async().await;
+    }
+    std::process::exit(0)
+}
+
 fn after_change_clash_mode() {
     AsyncHandler::spawn(move || async {
         if let Err(err) = handle::Handle::mihomo().close_all_connections().await {
