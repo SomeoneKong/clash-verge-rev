@@ -26,15 +26,19 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            payloads: true
           - os: macos-latest
             target: aarch64-apple-darwin
+            payloads: true
           # rpm takes no '-' in a version, which the custom versions have
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             args: --bundles deb
+            payloads: true
           - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             args: --bundles deb
+            payloads: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -70,6 +74,13 @@ jobs:
           pnpm release-version "${GITHUB_REF_NAME}"
           pnpm run prebuild ${{ matrix.target }}
 
+      # The update component goes into the app's resources, and on Windows the install
+      # fingerprint that tells whether a patch applies.
+      - name: Build the update component
+        if: matrix.payloads
+        shell: bash
+        run: node scripts/fork-updater-payload.mjs prepare ${{ matrix.target }}
+
       # Updater artifacts are signed with the fork's key; the macOS bundle gets an
       # ad-hoc signature so it is sealed.
       - name: Build
@@ -82,6 +93,15 @@ jobs:
           echo '{"bundle":{"macOS":{"signingIdentity":"-"}}}' > "${RUNNER_TEMP}/fork.conf.json"
           pnpm tauri build --target ${{ matrix.target }} --config "${RUNNER_TEMP}/fork.conf.json" ${{ matrix.args }}
 
+      - name: Build update payloads
+        if: matrix.payloads
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          node scripts/fork-updater-payload.mjs payloads ${{ matrix.target }} "${GITHUB_REF_NAME}" target/${{ matrix.target }}/release/bundle/payloads
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
@@ -90,6 +110,7 @@ jobs:
             target/${{ matrix.target }}/release/bundle/dmg/*.dmg
             target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz*
             target/${{ matrix.target }}/release/bundle/deb/*.deb*
+            target/${{ matrix.target }}/release/bundle/payloads/*
           if-no-files-found: error
 
   release:
