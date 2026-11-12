@@ -78,6 +78,27 @@ pub async fn restart_app() {
     app_handle.restart();
 }
 
+/// Restarts into an update that is already installed. A core run by the service keeps serving
+/// until the new app starts it again, so the update interrupts traffic only for that restart; a
+/// core the app runs itself has to stop with the app.
+pub async fn restart_after_update() {
+    if !matches!(
+        *CoreManager::global().get_running_mode(),
+        crate::core::manager::RunningMode::Service
+    ) {
+        return restart_app().await;
+    }
+    logging!(
+        info,
+        Type::System,
+        "Restarting into the installed update, the core keeps running"
+    );
+    handle::Handle::global().set_is_exiting();
+    Config::apply_all_and_save_file().await;
+    utils::server::shutdown_embedded_server();
+    handle::Handle::app_handle().restart();
+}
+
 fn after_change_clash_mode() {
     AsyncHandler::spawn(move || async {
         if let Err(err) = handle::Handle::mihomo().close_all_connections().await {

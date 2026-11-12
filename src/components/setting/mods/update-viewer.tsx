@@ -15,11 +15,7 @@ import type { Options as ReactMarkdownOptions } from 'react-markdown'
 import { BaseDialog, DialogRef } from '@/components/base'
 import { useUpdate } from '@/hooks/use-update'
 import type { DownloadEvent } from '@/services/bindings'
-import {
-  cancelUpdateDownload,
-  installUpdate,
-  restartApp,
-} from '@/services/cmds'
+import { cancelUpdateDownload, installUpdate } from '@/services/cmds'
 import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
 import { useSetUpdateState, useUpdateState } from '@/services/states'
@@ -272,19 +268,11 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
     }
 
     try {
-      const result = await mutate(
-        () => installUpdate(updateInfo.version, onDownloadEvent),
-        {
-          id: 'install-app-update',
-          errorNotice: false,
-        },
-      )
-      if (result.ok && result.value) {
-        await mutate(() => restartApp(), {
-          id: 'restart-app',
-          errorNotice: false,
-        })
-      }
+      // The backend restarts into an installed update itself, and keeps the app when it cannot.
+      await mutate(() => installUpdate(updateInfo.version, onDownloadEvent), {
+        id: 'install-app-update',
+        errorNotice: false,
+      })
     } catch (err: any) {
       showNotice.error(err)
     } finally {

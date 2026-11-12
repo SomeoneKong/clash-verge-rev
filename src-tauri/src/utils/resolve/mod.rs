@@ -177,7 +177,7 @@ async fn init_silent_updater() {
     // Install cached updates before starting background checks.
     if SilentUpdater::global().try_install_on_startup(app_handle).await {
         logging!(info, Type::Setup, "Update installed at startup, restarting...");
-        feat::restart_app().await;
+        feat::restart_after_update().await;
     }
 
     let app_handle = app_handle.clone();
