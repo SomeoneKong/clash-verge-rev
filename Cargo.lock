@@ -1099,6 +1099,7 @@ dependencies = [
  "clash-verge-logging",
  "clash-verge-media-unlock",
  "clash-verge-signal",
+ "clash-verge-updater",
  "clash_verge_service_ipc",
  "criterion",
  "dark-light",
@@ -1225,6 +1226,25 @@ dependencies = [
  "clash-verge-logging",
  "log",
  "tokio",
+]
+
+[[package]]
+name = "clash-verge-updater"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "chrono",
+ "libc",
+ "minisign-verify",
+ "semver 1.0.28",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tokio",
+ "windows-service",
+ "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]
