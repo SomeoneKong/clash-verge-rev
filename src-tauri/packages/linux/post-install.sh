@@ -15,3 +15,15 @@ if [ "$ID" = "deepin" ]; then
         fi
     done
 fi
+
+# Install the service with the app, so TUN needs no authorization later, and replace it when the
+# package carries a different service binary or the service is not running. Otherwise only the
+# cores are published, and a running core keeps its file until the app restarts it.
+service_args=--install-service
+if cmp -s /usr/bin/clash-verge-service /var/lib/clash-verge-service/bin/clash-verge-service &&
+    systemctl is-enabled --quiet clash-verge-service && systemctl is-active --quiet clash-verge-service; then
+    service_args=
+fi
+/usr/bin/clash-verge-service-install $service_args \
+    --install-core /usr/bin/verge-mihomo --install-core /usr/bin/verge-mihomo-alpha ||
+    echo "Clash Verge: the service was not installed or updated; it can be installed from the app" >&2

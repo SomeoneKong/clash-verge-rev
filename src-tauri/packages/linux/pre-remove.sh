@@ -1,5 +1,9 @@
 #!/bin/bash
-/usr/bin/clash-verge-service-uninstall
+# An upgrade keeps the service; the new package's post-install script updates it.
+case "$1" in
+upgrade | failed-upgrade) ;;
+*) /usr/bin/clash-verge-service-uninstall ;;
+esac
 
 . /etc/os-release
 
