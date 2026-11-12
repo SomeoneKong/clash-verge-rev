@@ -27,3 +27,14 @@ fi
 /usr/bin/clash-verge-service-install $service_args \
     --install-core /usr/bin/verge-mihomo --install-core /usr/bin/verge-mihomo-alpha ||
     echo "Clash Verge: the service was not installed or updated; it can be installed from the app" >&2
+
+# The update component applies signed updates later without asking for authorization.
+updater="/usr/lib/Clash Verge/resources/clash-verge-updater"
+if [ -f "$updater" ]; then
+    chmod 755 "$updater"
+    "$updater" install || echo "Clash Verge: the update component was not installed" >&2
+    if [ -z "$CLASH_VERGE_UPDATE_TXN" ]; then
+        "$updater" record-install --source deb --from "${2:-}" \
+            --to "$(dpkg-query -W -f='${Version}' clash-verge)" --result ok || true
+    fi
+fi

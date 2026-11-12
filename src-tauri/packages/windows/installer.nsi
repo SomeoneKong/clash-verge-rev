@@ -77,6 +77,108 @@ Var VC_REDIST_URL
 Var VC_REDIST_EXE
 Var VC_RUNTIME_READY
 Var VC_RUNTIME_NEEDED
+Var UpdaterTxn ; set when the update component runs this installer
+Var UpdaterLock ; the machine-wide update lock, held until the process exits
+Var LockHeld ; the uninstaller runs inside an installer that holds the lock
+Var PreviousVersion
+Var ExternalMarked
+
+; The update component applies signed updates from %ProgramData%\clash-verge-updater. An installer
+; it does not run takes its machine-wide lock first, so the two never write at the same time. The
+; component's worker holds the lock while it runs this installer with /UPDATER; a lock found free
+; means no worker does, and the installer then counts as one run by hand.
+!macro AcquireUpdateLock
+  ReadEnvStr $0 PROGRAMDATA
+  ${If} ${FileExists} "$0\clash-verge-updater\*.*"
+    ; GENERIC_READ | GENERIC_WRITE, no sharing, OPEN_ALWAYS; the last error is pushed after
+    System::Call 'kernel32::CreateFileW(w "$0\clash-verge-updater\update.lock", i 0xC0000000, i 0, p 0, i 4, i 0x80, p 0) p.r1 ?e'
+    Pop $2
+    ${If} $1 = -1
+      ; Only a worker of a transaction that exists holds it for this installer (sharing violation).
+      ${If} $UpdaterTxn == ""
+      ${OrIf} $2 <> 32
+      ${OrIfNot} ${FileExists} "$0\clash-verge-updater\txn\$UpdaterTxn\*.*"
+        MessageBox MB_ICONEXCLAMATION "An update of ${PRODUCTNAME} is in progress. Try again when it has finished." /SD IDOK
+        SetErrorLevel 5
+        Quit
+      ${EndIf}
+    ${Else}
+      StrCpy $UpdaterLock $1
+      StrCpy $UpdaterTxn ""
+    ${EndIf}
+  ${Else}
+    StrCpy $UpdaterTxn ""
+  ${EndIf}
+!macroend
+
+; Before its first write, an installer the component does not run records itself, so the
+; component's recovery of an interrupted update does not undo what this installer did. It appends
+; to the file itself rather than run anything from the component's directory.
+!macro MarkExternalInstall
+  ${If} $UpdaterTxn == ""
+  ${AndIf} $ExternalMarked != 1
+    Push $0
+    Push $1
+    ReadEnvStr $0 PROGRAMDATA
+    ${If} ${FileExists} "$0\clash-verge-updater\*.*"
+      ClearErrors
+      FileOpen $1 "$0\clash-verge-updater\external-installs" a
+      ${IfNot} ${Errors}
+        FileSeek $1 0 END
+        FileWrite $1 "nsis$\t${VERSION}$\n"
+        FileClose $1
+      ${EndIf}
+      ${If} ${Errors}
+        MessageBox MB_ICONSTOP "${PRODUCTNAME} cannot record this installation for its update component." /SD IDOK
+        SetErrorLevel 5
+        Quit
+      ${EndIf}
+    ${EndIf}
+    Pop $1
+    Pop $0
+    StrCpy $ExternalMarked 1
+  ${EndIf}
+!macroend
+
+; Installs or updates the resident update component, and records an install it did not run.
+!macro InstallUpdateComponent
+  DetailPrint "Installing the ${PRODUCTNAME} update component..."
+  nsExec::ExecToLog `"$INSTDIR\resources\clash-verge-updater.exe" install`
+  Pop $0
+  ${IfThen} $0 != 0 ${|} DetailPrint "Installing the update component returned $0" ${|}
+  ${If} $UpdaterTxn == ""
+    nsExec::Exec `"$INSTDIR\resources\clash-verge-updater.exe" record-install --source nsis --from "$PreviousVersion" --to ${VERSION} --result ok`
+    Pop $0
+  ${EndIf}
+!macroend
+
+; Before this installer writes into the component's directory, the component program it carries,
+; run from its own temporary copy, makes that directory or takes it over, protected.
+!macro PrepareUpdateComponent
+  InitPluginsDir
+  {{#each resources}}
+  !if "{{this.[1]}}" == "resources\clash-verge-updater.exe"
+    File "/oname=$PLUGINSDIR\clash-verge-updater.exe" "{{no-escape @key}}"
+  !endif
+  {{/each}}
+  nsExec::Exec `"$PLUGINSDIR\clash-verge-updater.exe" prepare`
+  Pop $0
+  ${If} $0 != 0
+    MessageBox MB_ICONSTOP "${PRODUCTNAME} cannot prepare its update component ($0)." /SD IDOK
+    SetErrorLevel 5
+    Quit
+  ${EndIf}
+!macroend
+
+; An update keeps the component; the installer that runs the update replaces it.
+!macro UninstallUpdateComponent
+  ${If} $UpdateMode <> 1
+  ${AndIf} ${FileExists} "$INSTDIR\resources\clash-verge-updater.exe"
+    DetailPrint "Removing the ${PRODUCTNAME} update component..."
+    nsExec::ExecToLog `"$INSTDIR\resources\clash-verge-updater.exe" uninstall`
+    Pop $0
+  ${EndIf}
+!macroend
 
 Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
@@ -346,6 +448,8 @@ Function PageLeaveReinstall
       ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
       ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|} ; append /UPDATE
       ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|} ; append /P
+      !insertmacro MarkExternalInstall
+      StrCpy $R1 "$R1 /LOCKHELD"
       StrCpy $R1 "$R1 _?=$4" ; append uninstall directory
       ExecWait '$R1' $0
     ${EndIf}
@@ -483,6 +587,9 @@ Function .onInit
     StrCpy $UpdateMode 1
   ${EndIf}
 
+  ${GetOptions} $CMDLINE "/UPDATER=" $UpdaterTxn
+  ${IfThen} ${Errors} ${|} StrCpy $UpdaterTxn "" ${|}
+
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
     ; Auto-update forwards the app's UI language as `/LANG=<NSIS-lang-id>` so
     ; the installer uses it directly and skips the interactive language
@@ -524,6 +631,10 @@ Function .onInit
 
     Call RestorePreviousInstallLocation
   ${EndIf}
+
+  ReadRegStr $PreviousVersion SHCTX "${UNINSTKEY}" "DisplayVersion"
+  !insertmacro PrepareUpdateComponent
+  !insertmacro AcquireUpdateLock
 
 
   !if "${INSTALLMODE}" == "both"
@@ -697,7 +808,7 @@ FunctionEnd
       Push $0
       SimpleSC::GetErrorMessage
       Pop $0
-      MessageBox MB_OK|MB_ICONSTOP "Check Service Status Error ($0)"
+      MessageBox MB_OK|MB_ICONSTOP "Check Service Status Error ($0)" /SD IDOK
     ${EndIf}
   ${EndIf}
 !macroend
@@ -944,6 +1055,7 @@ Section Install
     !insertmacro NSIS_HOOK_PREINSTALL
   !endif
 
+  !insertmacro MarkExternalInstall
   nsExec::Exec 'netsh int tcp res'
 
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
@@ -1026,6 +1138,7 @@ Section Install
   !endif
 
   !insertmacro StartVergeService
+  !insertmacro InstallUpdateComponent
 
   ; Create file associations
   {{#each file_associations as |association| ~}}
@@ -1138,6 +1251,11 @@ Function un.onInit
   ${IfNot} ${Errors}
     StrCpy $UpdateMode 1
   ${EndIf}
+
+  ${GetOptions} $CMDLINE "/LOCKHELD" $LockHeld
+  ${IfNot} ${Errors}
+    StrCpy $LockHeld 1
+  ${EndIf}
 FunctionEnd
 
 Section Uninstall
@@ -1146,8 +1264,12 @@ Section Uninstall
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
 
+  ${If} $LockHeld <> 1
+    !insertmacro AcquireUpdateLock
+  ${EndIf}
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
   !insertmacro CheckAllVergeProcesses
+  !insertmacro UninstallUpdateComponent
   !insertmacro RemoveVergeService
 
   ; Remove cached window state files
@@ -1200,6 +1322,18 @@ Section Uninstall
   ; A failed core upgrade leaves the displaced binary behind; it is never user data.
   Delete "$INSTDIR\verge-mihomo.old"
   Delete "$INSTDIR\verge-mihomo-alpha.old"
+
+  ; What updates applied by the update component leave: displaced programs and staging directories.
+  Delete "$INSTDIR\*.old-*"
+  Delete "$INSTDIR\resources\*.old-*"
+  Delete "$INSTDIR\*.undone"
+  Delete "$INSTDIR\resources\*.undone"
+  FindFirst $0 $1 "$INSTDIR\.update-*"
+  ${DoWhile} $1 != ""
+    RMDir /r "$INSTDIR\$1"
+    FindNext $0 $1
+  ${Loop}
+  FindClose $0
 
   ; Delete app associations
   {{#each file_associations as |association| ~}}

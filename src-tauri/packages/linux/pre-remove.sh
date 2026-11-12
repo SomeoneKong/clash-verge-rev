@@ -1,8 +1,12 @@
 #!/bin/bash
-# An upgrade keeps the service; the new package's post-install script updates it.
+# An upgrade keeps the service and the update component; the new package's post-install script
+# updates them.
 case "$1" in
 upgrade | failed-upgrade) ;;
-*) /usr/bin/clash-verge-service-uninstall ;;
+*)
+    /usr/bin/clash-verge-service-uninstall
+    "/usr/lib/Clash Verge/resources/clash-verge-updater" uninstall || true
+    ;;
 esac
 
 . /etc/os-release
