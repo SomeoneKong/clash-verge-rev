@@ -7,6 +7,8 @@ import { closeConnection } from 'tauri-plugin-mihomo-api'
 
 import parseTraffic from '@/utils/parse-traffic'
 
+import { formatConnectionChains } from './connection-row-view'
+
 export interface ConnectionDetailRef {
   open: (detail: IConnectionsItem, closed: boolean) => void
   close: () => void
@@ -71,7 +73,7 @@ const InnerConnectionDetail = ({ data, closed, onClose }: InnerProps) => {
   const { t } = useTranslation()
   const { metadata, rulePayload } = data
   const theme = useTheme()
-  const chains = [...data.chains].reverse().join(' / ')
+  const chains = formatConnectionChains(data.chains, data.dialerChains)
   const rule = rulePayload ? `${data.rule}(${rulePayload})` : data.rule
   const hostAddress =
     metadata.host || metadata.destinationIP || metadata.remoteDestination
