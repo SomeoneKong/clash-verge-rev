@@ -61,7 +61,7 @@ main() {
     local deb="Clash.Verge_${version}_${arch}.deb"
     local url="https://github.com/$REPO/releases/download/$tag"
 
-    local previous="" had_service=false
+    local previous=""
     case "$(package_state)" in
     "install ok installed|"*) previous="$(package_state)" && previous="${previous#*|}" ;;
     esac
@@ -69,7 +69,6 @@ main() {
         echo "Clash Verge $version is already installed, with mihomo $(core_version)."
         return
     fi
-    if has_service; then had_service=true; fi
 
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
@@ -93,9 +92,9 @@ main() {
 
     echo
     echo "Clash Verge $version installed successfully${previous:+ (upgraded from $previous)}, with mihomo $(core_version)."
-    # the package scripts remove the service on every upgrade
-    if $had_service && ! has_service; then
-        echo "The upgrade removed the Clash Verge service. To use service mode or TUN, install it again in Settings."
+    # the package installs the service for the user who ran sudo; run directly as root, it has none
+    if ! has_service; then
+        echo "The Clash Verge service is not installed. To use service mode or TUN, install it in Settings."
     fi
     if pgrep -x clash-verge >/dev/null 2>&1; then
         echo "The previous version is still running: quit Clash Verge from the tray and start it again."
