@@ -90,3 +90,5 @@ tray:
     systemProxy: Proksi Sistem
     tun: TUN
     profile: Profil
+forkUpdater:
+  componentInstallPrompt: Menginstal komponen pembaruan Clash Verge memerlukan hak administrator sekali; pembaruan berikutnya tidak akan memintanya lagi.

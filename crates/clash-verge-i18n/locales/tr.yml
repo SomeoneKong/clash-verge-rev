@@ -90,3 +90,5 @@ tray:
     systemProxy: Sistem Vekil'i
     tun: TUN
     profile: Profil
+forkUpdater:
+  componentInstallPrompt: Clash Verge güncelleme bileşenini kurmak bir kez yönetici ayrıcalıkları gerektirir; sonraki güncellemeler bunu tekrar istemez.
