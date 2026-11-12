@@ -39,11 +39,18 @@ export const formatConnectionTraffic = (value?: number) => {
   return `${text} ${TRAFFIC_UNITS[exp]}`
 }
 
-export const formatConnectionChains = (chains: string[]) => {
+export const formatConnectionChains = (
+  chains: string[],
+  dialerChains?: string[][],
+) => {
   let value = ''
   for (let i = chains.length - 1; i >= 0; i -= 1) {
     if (value) value += ' / '
     value += chains[i]
+  }
+  // each dialer-proxy layer, as `group / node`, that the previous node is reached through
+  for (const layer of dialerChains ?? []) {
+    value += ` ← ${formatConnectionChains(layer)}`
   }
   return value
 }
@@ -95,7 +102,7 @@ const createConnectionRowView = (connection: IConnectionsItem) => {
     process: getConnectionProcess(connection),
     network: connection.metadata.network,
     type: connection.metadata.type,
-    chains: formatConnectionChains(connection.chains),
+    chains: formatConnectionChains(connection.chains, connection.dialerChains),
     rule: getConnectionRule(connection),
     time: connection.start,
     source: getConnectionSource(connection),
