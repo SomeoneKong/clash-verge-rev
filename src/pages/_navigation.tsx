@@ -1,3 +1,4 @@
+import BarChartOutlinedIcon from '@mui/icons-material/BarChartOutlined'
 import DnsOutlinedIcon from '@mui/icons-material/DnsOutlined'
 import ForkRightOutlinedIcon from '@mui/icons-material/ForkRightOutlined'
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
@@ -16,6 +17,7 @@ import ProxiesSvg from '@/assets/image/itemicon/proxies.svg?react'
 import RulesSvg from '@/assets/image/itemicon/rules.svg?react'
 import SettingsSvg from '@/assets/image/itemicon/settings.svg?react'
 import UnlockSvg from '@/assets/image/itemicon/unlock.svg?react'
+import UsageSvg from '@/assets/image/itemicon/usage.svg?react'
 
 import { navigationItems } from './_navigation-meta'
 import ConnectionsPage from './connections'
@@ -26,6 +28,7 @@ import ProxyPage from './proxies'
 import RulesPage from './rules'
 import SettingPage from './settings'
 import UnlockPage from './unlock'
+import UsagePage from './usage'
 
 type NavigationItem = {
   label: (typeof navigationItems)[keyof typeof navigationItems]['label']
@@ -54,6 +57,11 @@ export const navItems: NavigationItem[] = [
     ...navigationItems.connections,
     icon: [<LanguageOutlinedIcon key="mui" />, <ConnectionsSvg key="svg" />],
     Component: ConnectionsPage,
+  },
+  {
+    ...navigationItems.usage,
+    icon: [<BarChartOutlinedIcon key="mui" />, <UsageSvg key="svg" />],
+    Component: UsagePage,
   },
   {
     ...navigationItems.rules,
