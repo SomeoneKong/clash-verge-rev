@@ -922,6 +922,7 @@ pub(super) async fn start_with_existing_service(config_file: &Path) -> Result<()
         macos_proxy: None,
     };
 
+    let replaced = crate::core::proxy_usage::before_core_ends(crate::core::proxy_usage::REPLACEMENT_COLLECTION).await;
     let response = match clash_verge_service_ipc::start_clash(&credentials, &request).await {
         Ok(response) => response,
         Err(error) => {
@@ -983,6 +984,8 @@ pub(super) async fn start_with_existing_service(config_file: &Path) -> Result<()
         proposed_session_token,
     )
     .await;
+
+    replaced.confirm();
 
     // PAC follows the Running Mode; the caller opens it via `core_started(Service)`.
     start_owner_monitor();
@@ -1762,6 +1765,7 @@ async fn discard_fetched(fetched: Vec<FetchedCache>) {
 /// 通过服务停止core
 #[tracing::instrument(skip_all, level = "info", fields(code = tracing::field::Empty, outcome = tracing::field::Empty))]
 pub(super) async fn stop_core_by_service() -> Result<()> {
+    let collected = crate::core::proxy_usage::before_core_ends(crate::core::proxy_usage::FINAL_COLLECTION).await;
     cancel_owner_monitors();
 
     let credentials = match current_owner_credentials() {
@@ -1810,6 +1814,7 @@ pub(super) async fn stop_core_by_service() -> Result<()> {
     }
 
     clear_active_service_session();
+    collected.confirm();
     tracing::Span::current().record("outcome", "stopped");
     logging!(info, Type::Service, "服务成功停止核心");
     Ok(())
