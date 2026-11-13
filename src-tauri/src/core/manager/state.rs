@@ -46,14 +46,14 @@ fn sidecar_config_without_tun(yaml: &str) -> Result<std::string::String> {
 const SIDECAR_READINESS_ATTEMPTS: usize = 30;
 
 #[cfg(target_os = "windows")]
-async fn retry_service_start<Start, StartFuture>(
+async fn retry_service_start<Start, StartFuture, T: Send>(
     attempts: usize,
     retry_delay: std::time::Duration,
     mut start: Start,
-) -> Result<()>
+) -> Result<T>
 where
     Start: FnMut() -> StartFuture + Send,
-    StartFuture: std::future::Future<Output = Result<()>> + Send,
+    StartFuture: std::future::Future<Output = Result<T>> + Send,
 {
     let attempts = NonZeroUsize::new(attempts).ok_or_else(|| anyhow::anyhow!("service start failed"))?;
     retry(RetryPolicy::fixed(attempts, retry_delay), |attempt| {
@@ -364,23 +364,27 @@ impl CoreManager {
         #[cfg(target_os = "windows")]
         {
             use crate::constants::timing;
-            retry_service_start(timing::SERVICE_START_RETRIES, timing::SERVICE_START_RETRY_DELAY, || {
+            let start = retry_service_start(timing::SERVICE_START_RETRIES, timing::SERVICE_START_RETRY_DELAY, || {
                 service::run_core_by_service(config_file)
             })
             .await?;
             self.mark_core_ready();
             self.core_started(RunningMode::Service);
-            self.restore_selected_nodes().await;
+            if start.restores_selections() {
+                self.restore_selected_nodes().await;
+            }
             service::request_runtime_provider_sync(timing::RUNTIME_PROVIDER_SYNC_DELAY);
             Ok(())
         }
 
         #[cfg(not(target_os = "windows"))]
         {
-            service::run_core_by_service(config_file).await?;
+            let start = service::run_core_by_service(config_file).await?;
             self.mark_core_ready();
             self.core_started(RunningMode::Service);
-            self.restore_selected_nodes().await;
+            if start.restores_selections() {
+                self.restore_selected_nodes().await;
+            }
             service::request_runtime_provider_sync(crate::constants::timing::RUNTIME_PROVIDER_SYNC_DELAY);
             Ok(())
         }

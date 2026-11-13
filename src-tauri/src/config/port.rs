@@ -10,7 +10,7 @@ use crate::{
         validate::CoreConfigValidator,
     },
     process::AsyncHandler,
-    utils::port::find_next_available_port,
+    utils::{dirs, port::find_next_available_port},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use clash_verge_draft::DraftTransaction;
@@ -248,6 +248,16 @@ async fn owned_service_core_uses_port(port: u16) -> bool {
         return false;
     }
 
+    // Until the app takes the core over it addresses the sidecar's controller, which nothing
+    // serves now: the core the service runs listens on the service's.
+    if let Err(error) = address_service_core() {
+        logging!(
+            warn,
+            Type::Service,
+            "Unable to address the service core while checking mixed proxy port {port}: {error:#}"
+        );
+        return true;
+    }
     match Handle::mihomo().get_base_config().await {
         Ok(config) => config.mixed_port == port,
         Err(error) => {
@@ -260,6 +270,12 @@ async fn owned_service_core_uses_port(port: u16) -> bool {
             true
         }
     }
+}
+
+fn address_service_core() -> Result<()> {
+    let service_ipc = dirs::ipc_path()?;
+    Handle::mihomo().update_socket_path(dirs::path_to_str(&service_ipc)?.to_owned())?;
+    Ok(())
 }
 
 fn configured_listener_ports(clash: &IClashTemp, verge: &IVerge) -> HashSet<u16> {

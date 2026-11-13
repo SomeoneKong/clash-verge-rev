@@ -361,6 +361,8 @@ impl SilentUpdater {
 
     /// The gate goes with the installation, which may outlast a caller that stops waiting.
     async fn install(update: Update, bytes: Vec<u8>, gate: tokio::sync::MutexGuard<'static, ()>) -> Result<()> {
+        // On Windows the installer ends the app right away, with its core left running.
+        crate::feat::settle_config_updates().await;
         Ok(tokio::task::spawn_blocking(move || {
             let _gate = gate;
             update.install(&bytes)
