@@ -1,0 +1,57 @@
+{
+  "page": {
+    "title": "Traffic Usage"
+  },
+  "ranges": {
+    "last24Hours": "Last 24 hours",
+    "last7Days": "Last 7 days",
+    "last30Days": "Last 30 days",
+    "last12Months": "Last 12 months",
+    "all": "All"
+  },
+  "views": {
+    "name": "By proxy",
+    "route": "بر اساس مسیر"
+  },
+  "metrics": {
+    "total": "Total",
+    "upload": "Upload",
+    "download": "Download"
+  },
+  "actions": {
+    "includeBuiltin": "Built-in outbounds",
+    "refresh": "Refresh",
+    "export": "Export"
+  },
+  "table": {
+    "name": "Name",
+    "route": "مسیر",
+    "upload": "Upload",
+    "download": "Download",
+    "total": "Total",
+    "share": "Share"
+  },
+  "labels": {
+    "other": "Others",
+    "unknown": "Unknown proxy",
+    "overflow": "ترافیک فراتر از سقف موارد",
+    "unknownRelay": "{{name}} (مسیر رله نامشخص)",
+    "noDialer": "بدون dialer"
+  },
+  "gapReasons": {
+    "coreLost": "the core ended unexpectedly",
+    "expired": "data expired before it was collected",
+    "corrupt": "a data file was damaged"
+  },
+  "notes": {
+    "overflow": "هسته حداکثر ۱۰٬۰۰۰ مورد ترافیک را جداگانه ثبت می‌کند (هر مسیر یک پروکسی و ترافیک رله‌شده آن یک مورد جداست)؛ بقیه با هم شمرده می‌شود.",
+    "gaps": "{{count}} periods in this range have incomplete data ({{reasons}}); they are hatched in the chart.",
+    "coverageUnknown": "Whether the data before {{time}} is complete is unknown.",
+    "timeAnomaly": "These days received traffic after they were archived, likely because the system clock was changed: {{days}}",
+    "pending": "Traffic since {{time}} is still being collected."
+  },
+  "messages": {
+    "exported": "Traffic usage exported"
+  },
+  "empty": "No traffic recorded yet"
+}
