@@ -390,6 +390,10 @@ impl CoreManager {
             if !matches!(*self.get_running_mode(), RunningMode::Service) {
                 return Err(anyhow!("core mode changed while applying service configuration"));
             }
+            // An app leaving with its core running must not send a reload that could outlive it.
+            if handle::Handle::global().is_exiting() {
+                return Err(anyhow!("application is exiting"));
+            }
             return self.apply_config_by_service(&path).await;
         }
 
@@ -401,8 +405,54 @@ impl CoreManager {
     /// Caller must hold `lifecycle_lock`.
     #[tracing::instrument(skip_all, level = "info", fields(path = %path.display(), outcome = tracing::field::Empty))]
     async fn apply_config_by_service(&self, path: &std::path::Path) -> Result<()> {
+        use crate::core::service_session;
+
+        // A reload an earlier application sent may still reach the core; only a new process
+        // ends it.
+        if service_session::applying() {
+            logging!(
+                info,
+                Type::Core,
+                "An earlier reload may still reach the core; replacing the core"
+            );
+            self.replace_service_core_with_config(path).await?;
+            tracing::Span::current().record("outcome", "replaced");
+            return Ok(());
+        }
+        let before = match crate::core::service::runtime_digests(path).await {
+            Ok(before) => Some(before),
+            Err(err) => {
+                // The start-only settings cannot be compared, so the record no longer vouches for
+                // what a later app would adopt.
+                logging!(
+                    warn,
+                    Type::Core,
+                    "Cannot digest the service runtime; the next app will restart the core: {err:#}"
+                );
+                service_session::forget();
+                None
+            }
+        };
+        // Start-only settings apply only when the core starts. Staged, they would also reach a
+        // watchdog restart that the session record does not account for.
+        if let (Some(before), Some(started)) = (&before, service_session::current_startup())
+            && before.startup != started
+        {
+            logging!(
+                info,
+                Type::Core,
+                "Start-only settings changed; replacing the core to apply them"
+            );
+            self.replace_service_core_with_config(path).await?;
+            tracing::Span::current().record("outcome", "replaced");
+            return Ok(());
+        }
+
+        service_session::begin_applying();
         match plan_config_application(&self.attempt_staging(path).await) {
             ConfigApplication::Fail(message) => {
+                // No reload was sent; what the core runs is no longer known to match the record.
+                service_session::finish_applying(None, None);
                 // Replacement would hand the service the same rejected bundle.
                 logging!(
                     warn,
@@ -413,6 +463,15 @@ impl CoreManager {
             }
             ConfigApplication::ReloadFrom(staged) => match self.reload_config(&staged).await {
                 Ok(()) => {
+                    // The Service read the assets itself; they count only if they still read the same.
+                    let after = crate::core::service::runtime_digests(path)
+                        .await
+                        .ok()
+                        .and_then(|after| after.runtime);
+                    let loaded = before
+                        .and_then(|before| before.runtime)
+                        .filter(|before| after.as_deref() == Some(before.as_str()));
+                    service_session::finish_applying(loaded, None);
                     tracing::Span::current().record("outcome", "staged");
                     crate::core::service::request_runtime_provider_sync(timing::RUNTIME_PROVIDER_SYNC_DELAY);
                     return Ok(());
@@ -429,6 +488,22 @@ impl CoreManager {
         self.replace_service_core_with_config(path).await?;
         tracing::Span::current().record("outcome", "replaced");
         Ok(())
+    }
+
+    /// Stages `path` for a core taken over from the previous app, asking once more when the
+    /// Service does not answer. Returns the staged configuration, or why the core must restart.
+    pub(crate) async fn stage_for_adoption(path: &std::path::Path) -> Result<std::string::String> {
+        match stage_with_confirmation(timing::STAGE_CONFIRM_TIMEOUT, || ask_to_stage(path)).await {
+            StageAttempt::Answered(StageRuntimeOutcome::Staged { config_path }) => Ok(config_path),
+            StageAttempt::Answered(StageRuntimeOutcome::RestartRequired { reason }) => {
+                Err(anyhow!("the service requires a restart ({reason:?})"))
+            }
+            StageAttempt::RefusedTheBundle(message) | StageAttempt::RefusedForAnotherReason(message) => {
+                Err(anyhow!("the service refused staging: {message}"))
+            }
+            StageAttempt::Unanswered(error) => Err(anyhow!("the service did not answer staging: {error}")),
+            StageAttempt::Unsupported => Err(anyhow!("the service cannot stage a runtime in place")),
+        }
     }
 
     async fn attempt_staging(&self, path: &std::path::Path) -> StageAttempt {
