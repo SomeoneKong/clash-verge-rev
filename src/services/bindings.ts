@@ -213,6 +213,10 @@ export const commands = {
     __TAURI_INVOKE<string>('import_local_backup', { source }),
   exportLocalBackup: (filename: string, destination: string) =>
     __TAURI_INVOKE<null>('export_local_backup', { filename, destination }),
+  getProxyUsage: (request: UsageQuery) =>
+    __TAURI_INVOKE<UsageReport_Serialize>('get_proxy_usage', { request }),
+  exportProxyUsage: (path: string) =>
+    __TAURI_INVOKE<null>('export_proxy_usage', { path }),
   createWebdavBackup: () => __TAURI_INVOKE<null>('create_webdav_backup'),
   saveWebdavConfig: (url: string, username: string, password: string) =>
     __TAURI_INVOKE<null>('save_webdav_config', { url, username, password }),
@@ -1002,6 +1006,111 @@ export type UnlockItem = {
   region: string | null
   check_time: string | null
 }
+
+/**  UTC hours, both ends inclusive, whose usage is incomplete. */
+export type UsageGap = UsageGap_Serialize | UsageGap_Deserialize
+
+export type UsageGapReason =
+  /**  The core ended without a final collection, so its last traffic is unknown. */
+  | 'core_lost'
+  /**  The core no longer kept the hours when they were collected. */
+  | 'expired'
+  /**  A data file could not be read. */
+  | 'corrupt'
+
+/**  UTC hours, both ends inclusive, whose usage is incomplete. */
+export type UsageGap_Deserialize = {
+  from: number
+  to: number
+  reason: UsageGapReason
+  time_anomaly?: boolean
+}
+
+/**  UTC hours, both ends inclusive, whose usage is incomplete. */
+export type UsageGap_Serialize = {
+  from: number
+  to: number
+  reason: UsageGapReason
+  time_anomaly?: boolean
+}
+
+export type UsageGranularity = 'hour' | 'day' | 'month'
+
+export type UsageItem = {
+  key: string
+  label: string
+  provider: string | null
+  proxyType: string | null
+  unknown: boolean
+  overflow: boolean
+  total: [number, number]
+}
+
+export type UsagePoint = {
+  startHour: number
+  /**  The statistics day or month, for daily and monthly points. */
+  label: string | null
+  values: [number, number][]
+}
+
+export type UsageQuery = {
+  range: UsageRange
+  view: UsageView
+  includeBuiltin: boolean
+}
+
+export type UsageRange =
+  | 'last24_hours'
+  | 'last7_days'
+  | 'last30_days'
+  | 'last12_months'
+  | 'all'
+
+export type UsageReport = UsageReport_Serialize | UsageReport_Deserialize
+
+export type UsageReport_Deserialize = {
+  granularity: UsageGranularity
+  /**  First and last UTC hour the result covers. */
+  fromHour: number
+  toHour: number
+  /**  The largest items by total, then everything else as the last entry of each point's values. */
+  items: UsageItem[]
+  other: [number, number]
+  points: UsagePoint[]
+  overflow: boolean
+  gaps: UsageGap_Deserialize[]
+  /**  Hours the running core may still add to that are not collected yet. */
+  pending: [number, number] | null
+  /**  Earlier gaps may have been lost with the state file. */
+  coverageUnknownBefore: number | null
+  /**  Statistics days that got usage after they were archived. */
+  timeAnomalyDays: string[]
+}
+
+export type UsageReport_Serialize = {
+  granularity: UsageGranularity
+  /**  First and last UTC hour the result covers. */
+  fromHour: number
+  toHour: number
+  /**  The largest items by total, then everything else as the last entry of each point's values. */
+  items: UsageItem[]
+  other: [number, number]
+  points: UsagePoint[]
+  overflow: boolean
+  gaps: UsageGap_Serialize[]
+  /**  Hours the running core may still add to that are not collected yet. */
+  pending: [number, number] | null
+  /**  Earlier gaps may have been lost with the state file. */
+  coverageUnknownBefore: number | null
+  /**  Statistics days that got usage after they were archived. */
+  timeAnomalyDays: string[]
+}
+
+export type UsageView =
+  /**  One item per proxy name within a provider. */
+  | 'name'
+  /**  One item per server; proxies without a single server stay on their own. */
+  | 'server'
 
 export type ValidationErrorKind =
   | 'fileMissing'

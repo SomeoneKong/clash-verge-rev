@@ -95,6 +95,7 @@ pub async fn restart_after_update() {
     );
     handle::Handle::global().set_is_exiting();
     settle_config_updates().await;
+    crate::core::proxy_usage::before_app_exit().await;
     Config::apply_all_and_save_file().await;
     utils::server::shutdown_embedded_server();
     handle::Handle::app_handle().restart();
@@ -111,6 +112,7 @@ pub async fn exit_for_update() -> ! {
         crate::core::manager::RunningMode::Service
     ) {
         logging!(info, Type::System, "Leaving for the installer, the core keeps running");
+        crate::core::proxy_usage::before_app_exit().await;
         utils::server::shutdown_embedded_server();
     } else {
         logging!(info, Type::System, "Leaving for the installer");
