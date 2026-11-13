@@ -243,12 +243,17 @@ async fn commit_current_profile(profiles: &Draft<IProfiles>, current: Option<Str
         .await
 }
 
-async fn handle_success(current_value: Option<&String>) -> CmdResult<ValidationOutcome> {
+/// `switched` is the count of the config a profile switch sent to the core.
+async fn handle_success(current_value: Option<&String>, switched: Option<u64>) -> CmdResult<ValidationOutcome> {
     commit_current_profile(&Config::profiles().await, current_value.cloned())
         .await
         .stringify_err()?;
     // Runtime refresh and tray rebuilding happen after saved node selections are restored.
-    profiles::activate_selected_nodes();
+    if let Some(published) = switched {
+        crate::core::outdated_connections::activate_and_close_after_switch(published);
+    } else {
+        profiles::activate_selected_nodes();
+    }
 
     if let Err(e) = profiles_save_file_safe().await {
         logging!(warn, Type::Cmd, "异步保存配置文件失败: {e:#}");
@@ -307,11 +312,16 @@ where
 async fn perform_config_update(
     current_value: Option<&String>,
     current_profile: Option<&String>,
+    switched: bool,
 ) -> CmdResult<ValidationOutcome> {
-    let update_result = run_profile_config_update_transition(|| CoreManager::global().update_config_forced()).await;
+    let (update_result, published) =
+        crate::core::outdated_connections::publishing(run_profile_config_update_transition(|| {
+            CoreManager::global().update_config_forced()
+        }))
+        .await;
 
     match update_result {
-        Ok(outcome) if outcome.is_valid() => handle_success(current_value).await,
+        Ok(outcome) if outcome.is_valid() => handle_success(current_value, published.filter(|_| switched)).await,
         Ok(outcome) => handle_validation_failure(outcome, current_profile).await,
         Err(e) => handle_update_error(e, current_profile).await,
     }
@@ -416,8 +426,10 @@ pub async fn patch_profiles_config(profiles: ProfileSelection) -> CmdResult<Vali
     Config::profiles().await.edit_draft(|d| {
         d.patch_config(&profiles);
     });
+    // a profile the request names that does not exist leaves the current one
+    let switched = Config::profiles().await.latest_arc().current != previous_profile;
 
-    perform_config_update(target_profile, previous_profile.as_ref())
+    perform_config_update(target_profile, previous_profile.as_ref(), switched)
         .await
         .map_err(|error| coded_error("PROFILE_SWITCH_FAILED", error))
 }

@@ -356,6 +356,7 @@ impl CoreManager {
 
         let run_path = Config::write_runtime_file(&yaml).await?;
         let previous = self.current_core_readiness_generation();
+        crate::core::outdated_connections::before_publishing().await;
         let result = self.apply_config(run_path).await;
         self.retain_applied_runtime(&Config::runtime().await, previous, &result);
         result?;
