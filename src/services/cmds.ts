@@ -15,6 +15,7 @@ import type {
   ProfileSelection,
   ProfilePatch,
   ProfileCreate,
+  UsageQuery,
 } from './bindings'
 
 export type {
@@ -500,4 +501,23 @@ export async function checkMediaUnlock(onComplete: Channel<UnlockItem>) {
 
 export async function checkMediaUnlockItem(name: string) {
   return commands.checkMediaUnlockItem(name)
+}
+
+export type {
+  UsageGap_Serialize as UsageGap,
+  UsageGapReason,
+  UsageItem,
+  UsagePoint,
+  UsageQuery,
+  UsageRange,
+  UsageReport_Serialize as UsageReport,
+  UsageView,
+} from './bindings'
+
+export async function getProxyUsage(query: UsageQuery) {
+  return commands.getProxyUsage(query)
+}
+
+export async function exportProxyUsage(path: string) {
+  return commands.exportProxyUsage(path)
 }

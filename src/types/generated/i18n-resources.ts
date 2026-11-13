@@ -213,6 +213,7 @@ export interface TranslationResources {
             rules: string
             settings: string
             unlock: string
+            usage: string
           }
         }
         serviceMigration: {
@@ -1589,6 +1590,7 @@ export interface TranslationResources {
           noDisney: string
           originalsOnly: string
           pending: string
+          risky: string
           unsupportedRegion: string
           yes: string
         }
@@ -1605,6 +1607,60 @@ export interface TranslationResources {
           }
           title: string
         }
+      }
+    }
+    usage: {
+      actions: {
+        export: string
+        includeBuiltin: string
+        refresh: string
+      }
+      empty: string
+      gapReasons: {
+        coreLost: string
+        corrupt: string
+        expired: string
+      }
+      labels: {
+        other: string
+        overflow: string
+        unknown: string
+      }
+      messages: {
+        exported: string
+      }
+      metrics: {
+        download: string
+        total: string
+        upload: string
+      }
+      notes: {
+        coverageUnknown: string
+        gaps: string
+        overflow: string
+        pending: string
+        timeAnomaly: string
+      }
+      page: {
+        title: string
+      }
+      ranges: {
+        all: string
+        last12Months: string
+        last24Hours: string
+        last30Days: string
+        last7Days: string
+      }
+      table: {
+        download: string
+        name: string
+        share: string
+        total: string
+        upload: string
+      }
+      views: {
+        name: string
+        server: string
       }
     }
   }
