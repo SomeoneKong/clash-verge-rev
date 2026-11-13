@@ -12,6 +12,10 @@ export const navigationItems = {
     label: 'layout.components.navigation.tabs.connections',
     path: '/connections',
   },
+  usage: {
+    label: 'layout.components.navigation.tabs.usage',
+    path: '/usage',
+  },
   rules: { label: 'layout.components.navigation.tabs.rules', path: '/rules' },
   logs: { label: 'layout.components.navigation.tabs.logs', path: '/logs' },
   unlock: {
