@@ -1100,6 +1100,7 @@ dependencies = [
  "clash-verge-media-unlock",
  "clash-verge-signal",
  "clash-verge-updater",
+ "clash-verge-usage",
  "clash_verge_service_ipc",
  "criterion",
  "dark-light",
@@ -1245,6 +1246,19 @@ dependencies = [
  "windows-service",
  "windows-sys 0.61.2",
  "zip",
+]
+
+[[package]]
+name = "clash-verge-usage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "specta",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
