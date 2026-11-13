@@ -314,6 +314,7 @@ impl CoreManager {
     /// Terminates the sidecar after its caller has successfully cleared the
     /// system proxy.
     pub(super) async fn stop_core_by_sidecar_unprepared(&self) -> Result<()> {
+        let collected = crate::core::proxy_usage::before_core_ends(crate::core::proxy_usage::FINAL_COLLECTION).await;
         if let Some(child) = self.take_child_sidecar() {
             let pid = child.pid();
 
@@ -331,6 +332,9 @@ impl CoreManager {
         }
         let result = self.wait_for_sidecar_exit().await;
         self.core_stopped();
+        if result.is_ok() {
+            collected.confirm();
+        }
         result
     }
 
