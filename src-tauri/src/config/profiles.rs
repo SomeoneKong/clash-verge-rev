@@ -601,7 +601,7 @@ pub(crate) fn supersede_selected_activation() {
     ACTIVATE_SELECTED_GENERATION.fetch_add(1, Ordering::AcqRel);
 }
 
-fn is_activation_current(generation: u64) -> bool {
+pub(crate) fn is_activation_current(generation: u64) -> bool {
     ACTIVATE_SELECTED_GENERATION.load(Ordering::Acquire) == generation
 }
 
@@ -833,6 +833,22 @@ fn unsettled_selections(selected: &[PrfSelected], proxies: &Proxies) -> Vec<Stri
         .collect()
 }
 
+/// Whether the selections of a plan are in place: each one the plan puts in place was put in
+/// place, and none waits for its group or node to load.
+fn selections_in_place(plan: &SelectedNodesPlan, completed: &HashMap<String, String>, proxies: &Proxies) -> bool {
+    remaining_activations(&plan.activations, completed).is_empty()
+        && plan.selected.iter().all(|item| {
+            let (Some(group_name), Some(node)) = (&item.name, &item.now) else {
+                return true;
+            };
+            proxies
+                .proxies
+                .get(group_name.as_str())
+                .and_then(|group| group.all.as_deref())
+                .is_some_and(|nodes| node_is_available(nodes, node))
+        })
+}
+
 /// Retries selections while provider-backed groups finish loading.
 async fn settle_pending_selections(selected: &[PrfSelected], completed: &mut HashMap<String, String>, generation: u64) {
     let deadline = Instant::now() + SELECTED_NODES_SETTLE_DEADLINE;
@@ -933,7 +949,7 @@ async fn activate_selected_nodes_worker(
         announce(Refresh::Clash);
     }
 
-    let plan = if needs_confirmation {
+    let (plan, snapshot) = if needs_confirmation {
         tokio::time::sleep(SELECTED_NODES_RECHECK_DELAY).await;
         if !is_activation_current(generation) {
             return Ok(());
@@ -956,9 +972,9 @@ async fn activate_selected_nodes_worker(
         if confirmed_activated_count > 0 && is_activation_current(generation) {
             announce(Refresh::Clash);
         }
-        confirmed_plan
+        (confirmed_plan, second_snapshot)
     } else {
-        immediate_plan
+        (immediate_plan, first_snapshot)
     };
     if !is_activation_current(generation) {
         return Ok(());
@@ -969,6 +985,13 @@ async fn activate_selected_nodes_worker(
         first_pass_done.notify();
         settle_pending_selections(&selected, &mut completed_activations, generation).await;
         return Ok(());
+    }
+
+    // a waiter is told only once the selections are in place
+    if selections_in_place(&plan, &completed_activations, &snapshot) {
+        first_pass_done.notify();
+    } else {
+        drop(first_pass_done);
     }
 
     if plan.repaired_count > 0 && is_activation_current(generation) {
@@ -994,14 +1017,21 @@ enum SelectionRepair {
 }
 
 pub(crate) fn activate_selected_nodes() {
-    // The first-pass signal is for callers that wait; a profile switch does not, and dropping
-    // the receiver simply makes the send a no-op.
+    // The first-pass signal is for callers that wait; dropping the receiver simply makes the
+    // send a no-op.
     drop(activate_selected_nodes_with(SelectionRepair::Prune));
+}
+
+/// Activates the saved selections after a profile switch. The receiver resolves once they are
+/// in place, and fails if they could not all be put in place or a newer activation took over,
+/// which the returned generation tells as well.
+pub(crate) fn activate_selected_nodes_after_switch() -> (tokio::sync::oneshot::Receiver<()>, u64) {
+    activate_selected_nodes_with(SelectionRepair::Prune)
 }
 
 /// Restores available selections before the system proxy points at the core, then retries the rest.
 pub(crate) async fn restore_selected_nodes() {
-    let first_pass = activate_selected_nodes_with(SelectionRepair::KeepRecords);
+    let (first_pass, _) = activate_selected_nodes_with(SelectionRepair::KeepRecords);
     if tokio::time::timeout(SELECTED_NODES_FIRST_PASS_BUDGET, first_pass)
         .await
         .is_err()
@@ -1014,7 +1044,7 @@ pub(crate) async fn restore_selected_nodes() {
     }
 }
 
-fn activate_selected_nodes_with(repair: SelectionRepair) -> tokio::sync::oneshot::Receiver<()> {
+fn activate_selected_nodes_with(repair: SelectionRepair) -> (tokio::sync::oneshot::Receiver<()>, u64) {
     logging!(debug, Type::Config, "starting activating selected nodes");
     let mut active_task = ACTIVATE_SELECTED_TASK.lock();
     let generation = ACTIVATE_SELECTED_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
@@ -1025,7 +1055,7 @@ fn activate_selected_nodes_with(repair: SelectionRepair) -> tokio::sync::oneshot
 
     let handle = tokio::spawn(async move {
         // Dropping this releases the startup waiter on every early exit.
-        let first_pass = FirstPassSignal(Some(first_pass_sender));
+        let mut first_pass = FirstPassSignal(Some(first_pass_sender));
         if let Some(previous_task) = previous_task {
             let _ = previous_task.await;
         }
@@ -1046,6 +1076,7 @@ fn activate_selected_nodes_with(repair: SelectionRepair) -> tokio::sync::oneshot
 
             if selected.is_empty() {
                 if is_activation_current(generation) {
+                    first_pass.notify();
                     announce(Refresh::Clash);
                 }
                 return Ok(());
@@ -1073,7 +1104,7 @@ fn activate_selected_nodes_with(repair: SelectionRepair) -> tokio::sync::oneshot
     });
     *active_task = Some(handle);
     drop(active_task);
-    first_pass_done
+    (first_pass_done, generation)
 }
 
 #[cfg(test)]
@@ -1244,6 +1275,29 @@ mod tests {
                 })
                 .collect::<HashMap<_, _>>(),
         }
+    }
+
+    #[test]
+    fn selections_are_in_place_once_all_were_put_in_place() {
+        let saved = vec![selected("Proxy", "Node B")];
+        let snapshot = proxies(vec![("Proxy", &["Node A", "Node B"], Some("Node A"))]);
+        let plan = reconcile_selected_nodes(&saved, None, &snapshot);
+
+        assert!(
+            !selections_in_place(&plan, &HashMap::new(), &snapshot),
+            "selecting failed"
+        );
+        let completed = HashMap::from([("Proxy".into(), "Node B".into())]);
+        assert!(selections_in_place(&plan, &completed, &snapshot));
+    }
+
+    #[test]
+    fn selections_waiting_for_their_group_are_not_in_place() {
+        let saved = vec![selected("provider-group", "saved")];
+        let unloaded = proxies(vec![("provider-group", &[], None)]);
+        let plan = reconcile_selected_nodes(&saved, Some(&unloaded), &unloaded);
+
+        assert!(!selections_in_place(&plan, &HashMap::new(), &unloaded));
     }
 
     #[test]

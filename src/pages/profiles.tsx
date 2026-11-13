@@ -25,7 +25,6 @@ import { throttle } from 'lodash-es'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useLocation } from 'react-router'
-import { closeAllConnections } from 'tauri-plugin-mihomo-api'
 
 import {
   BasePage,
@@ -365,10 +364,6 @@ const ProfilePage = () => {
         if (outcome.status === 'valid') {
           currentProfileRef.current = profile
           void mutateLogs().catch(() => {})
-          void mutate(() => closeAllConnections(), {
-            id: 'close-all-connections',
-            errorNotice: false,
-          }).catch(() => {})
 
           if (
             notifySuccess &&
