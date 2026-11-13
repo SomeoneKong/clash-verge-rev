@@ -1,0 +1,54 @@
+{
+  "page": {
+    "title": "流量用量"
+  },
+  "ranges": {
+    "last24Hours": "最近 24 小時",
+    "last7Days": "最近 7 天",
+    "last30Days": "最近 30 天",
+    "last12Months": "最近 12 個月",
+    "all": "全部"
+  },
+  "views": {
+    "name": "依節點",
+    "server": "依伺服器"
+  },
+  "metrics": {
+    "total": "合計",
+    "upload": "上傳",
+    "download": "下載"
+  },
+  "actions": {
+    "includeBuiltin": "內建出站",
+    "refresh": "重新整理",
+    "export": "匯出"
+  },
+  "table": {
+    "name": "名稱",
+    "upload": "上傳",
+    "download": "下載",
+    "total": "合計",
+    "share": "占比"
+  },
+  "labels": {
+    "other": "其他",
+    "unknown": "身分未知",
+    "overflow": "超出上限的代理"
+  },
+  "gapReasons": {
+    "coreLost": "核心意外結束",
+    "expired": "資料過期前未採集",
+    "corrupt": "資料檔案損壞"
+  },
+  "notes": {
+    "overflow": "核心最多分別統計 10000 個代理，其餘代理的流量合併計入。",
+    "gaps": "此時段內有 {{count}} 段資料不完整（{{reasons}}），圖中以斜紋標示。",
+    "coverageUnknown": "{{time}} 之前的資料是否完整未知。",
+    "timeAnomaly": "以下日期在歸檔後又收到了流量，可能是系統時間被修改過：{{days}}",
+    "pending": "{{time}} 以來的流量仍在採集中。"
+  },
+  "messages": {
+    "exported": "流量用量已匯出"
+  },
+  "empty": "尚無流量紀錄"
+}

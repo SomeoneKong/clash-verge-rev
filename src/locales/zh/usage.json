@@ -1,0 +1,54 @@
+{
+  "page": {
+    "title": "流量用量"
+  },
+  "ranges": {
+    "last24Hours": "最近 24 小时",
+    "last7Days": "最近 7 天",
+    "last30Days": "最近 30 天",
+    "last12Months": "最近 12 个月",
+    "all": "全部"
+  },
+  "views": {
+    "name": "按节点",
+    "server": "按服务器"
+  },
+  "metrics": {
+    "total": "合计",
+    "upload": "上传",
+    "download": "下载"
+  },
+  "actions": {
+    "includeBuiltin": "内置出站",
+    "refresh": "刷新",
+    "export": "导出"
+  },
+  "table": {
+    "name": "名称",
+    "upload": "上传",
+    "download": "下载",
+    "total": "合计",
+    "share": "占比"
+  },
+  "labels": {
+    "other": "其他",
+    "unknown": "身份未知",
+    "overflow": "超出上限的代理"
+  },
+  "gapReasons": {
+    "coreLost": "内核意外结束",
+    "expired": "数据过期前未采集",
+    "corrupt": "数据文件损坏"
+  },
+  "notes": {
+    "overflow": "内核最多分别统计 10000 个代理，其余代理的流量合并计入。",
+    "gaps": "此时段内有 {{count}} 段数据不完整（{{reasons}}），图中以斜纹标出。",
+    "coverageUnknown": "{{time}} 之前的数据是否完整未知。",
+    "timeAnomaly": "以下日期在归档后又收到了流量，可能是系统时间被修改过：{{days}}",
+    "pending": "{{time}} 以来的流量仍在采集中。"
+  },
+  "messages": {
+    "exported": "流量用量已导出"
+  },
+  "empty": "暂无流量记录"
+}
