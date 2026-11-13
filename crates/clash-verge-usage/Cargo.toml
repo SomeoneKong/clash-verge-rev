@@ -1,0 +1,20 @@
+[package]
+name = "clash-verge-usage"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+license = "GPL-3.0"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = "0.11.1"
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[lints]
+workspace = true
