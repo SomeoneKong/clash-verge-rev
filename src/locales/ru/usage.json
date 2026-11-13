@@ -1,0 +1,57 @@
+{
+  "page": {
+    "title": "Traffic Usage"
+  },
+  "ranges": {
+    "last24Hours": "Last 24 hours",
+    "last7Days": "Last 7 days",
+    "last30Days": "Last 30 days",
+    "last12Months": "Last 12 months",
+    "all": "All"
+  },
+  "views": {
+    "name": "By proxy",
+    "route": "По маршруту"
+  },
+  "metrics": {
+    "total": "Total",
+    "upload": "Upload",
+    "download": "Download"
+  },
+  "actions": {
+    "includeBuiltin": "Built-in outbounds",
+    "refresh": "Refresh",
+    "export": "Export"
+  },
+  "table": {
+    "name": "Name",
+    "route": "Маршрут",
+    "upload": "Upload",
+    "download": "Download",
+    "total": "Total",
+    "share": "Share"
+  },
+  "labels": {
+    "other": "Others",
+    "unknown": "Unknown proxy",
+    "overflow": "Трафик сверх лимита записей",
+    "unknownRelay": "{{name}} (маршрут ретрансляции неизвестен)",
+    "noDialer": "Без dialer"
+  },
+  "gapReasons": {
+    "coreLost": "the core ended unexpectedly",
+    "expired": "data expired before it was collected",
+    "corrupt": "a data file was damaged"
+  },
+  "notes": {
+    "overflow": "Ядро отдельно записывает не более 10 000 записей трафика (каждый маршрут прокси и его ретранслируемый трафик — отдельная запись); остальное учитывается вместе.",
+    "gaps": "{{count}} periods in this range have incomplete data ({{reasons}}); they are hatched in the chart.",
+    "coverageUnknown": "Whether the data before {{time}} is complete is unknown.",
+    "timeAnomaly": "These days received traffic after they were archived, likely because the system clock was changed: {{days}}",
+    "pending": "Traffic since {{time}} is still being collected."
+  },
+  "messages": {
+    "exported": "Traffic usage exported"
+  },
+  "empty": "No traffic recorded yet"
+}
