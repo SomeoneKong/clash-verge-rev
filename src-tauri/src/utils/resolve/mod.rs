@@ -79,6 +79,7 @@ async fn resolve_setup() {
     #[cfg(target_os = "macos")]
     crate::core::network_watch::start();
 
+    crate::core::proxy_usage::start();
     let core_init = AsyncHandler::spawn(|| async {
         init_core_manager().await;
     });

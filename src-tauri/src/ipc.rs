@@ -88,6 +88,8 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             cmd::restore_local_backup,
             cmd::import_local_backup,
             cmd::export_local_backup,
+            cmd::get_proxy_usage,
+            cmd::export_proxy_usage,
             cmd::create_webdav_backup,
             cmd::save_webdav_config,
             cmd::list_webdav_backup,

@@ -195,6 +195,7 @@ pub async fn clean_async() -> CleanupResult {
     )
     .await;
     result.stop_error = stop_error.into_inner();
+    crate::core::proxy_usage::finish().await;
 
     logging!(
         info,
@@ -251,6 +252,7 @@ where
 }
 
 async fn clean_session_ending_best_effort() -> CleanupResult {
+    crate::core::proxy_usage::skip_final_collections();
     logging!(
         info,
         Type::System,
