@@ -272,6 +272,20 @@ impl CoreManager {
         !self.config_update_in_progress.swap(true, Ordering::AcqRel)
     }
 
+    /// Waits until no configuration update runs, at most `limit`; false if one still does. An
+    /// app leaving with its core running lets the update end, so that the next app finds the
+    /// core's configuration settled and adopts it without a restart.
+    pub(crate) async fn wait_for_config_updates(&self, limit: std::time::Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        while self.config_update_in_progress.load(Ordering::Acquire) {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        true
+    }
+
     pub(crate) fn finish_config_update(&self) {
         self.config_update_in_progress.store(false, Ordering::Release);
         // Spawned because the caller may still hold the config write lock this waits for.

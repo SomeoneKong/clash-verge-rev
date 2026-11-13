@@ -445,7 +445,7 @@ fn new_command(program: impl AsRef<OsStr>) -> Command {
 }
 
 /// Parses the version out of `Mihomo Meta v1.19.30 darwin arm64 with go1.22.12 ...`.
-fn read_core_version(path: &Path) -> Result<std::string::String> {
+pub(crate) fn read_core_version(path: &Path) -> Result<std::string::String> {
     let output = new_command(path)
         .arg("-v")
         .output()

@@ -16,6 +16,7 @@ pub mod proxy_view;
 pub mod runstate;
 pub(crate) mod runtime_bundle;
 pub mod service;
+pub(crate) mod service_session;
 pub mod sysopt;
 pub mod timer;
 pub mod tray;

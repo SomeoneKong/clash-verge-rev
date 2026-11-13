@@ -14,6 +14,7 @@ use crate::{
             ReadyWaitError, RunState, RunStateEnv, RunStateStore, ServiceHealth,
         },
         runtime_bundle::{GEO_ASSETS, RemoteProviderRef, collect_runtime_bundle, remote_providers_of},
+        service_session::{self, CoreProcess, Observed, RuntimeDigests, SessionRecord},
         tray::Tray,
     },
     process::AsyncHandler,
@@ -142,6 +143,7 @@ fn active_service_supports_runtime_geo_read() -> bool {
 
 pub(crate) fn clear_active_service_session() {
     ACTIVE_SERVICE_SESSION.lock().take();
+    crate::core::service_session::discard();
 }
 
 #[derive(Clone, Copy, Default)]
@@ -912,6 +914,7 @@ pub(super) async fn start_with_existing_service(config_file: &Path) -> Result<()
 
     let credentials = current_owner_credentials()?;
     let runtime = collect_service_runtime_bundle(config_file).await?;
+    let digests = crate::core::service_session::digests(&runtime);
     let proposed_session_token = generate_service_session_token()?;
     let request = StartClashRequest {
         runtime,
@@ -966,12 +969,20 @@ pub(super) async fn start_with_existing_service(config_file: &Path) -> Result<()
     *ACTIVE_SERVICE_SESSION.lock() = Some(ActiveServiceSession {
         proof: OwnerSessionProof {
             generation: result.session.generation,
-            token: proposed_session_token,
+            token: proposed_session_token.clone(),
         },
         supports_runtime_staging: capabilities.runtime_staging,
         supports_runtime_file_read: capabilities.runtime_file_read,
         supports_runtime_geo_read: capabilities.runtime_geo_read,
     });
+    record_started_session(
+        &credentials,
+        &request.runtime,
+        digests,
+        result.session.generation,
+        proposed_session_token,
+    )
+    .await;
 
     // PAC follows the Running Mode; the caller opens it via `core_started(Service)`.
     start_owner_monitor();
@@ -989,7 +1000,7 @@ pub(super) async fn start_with_existing_service(config_file: &Path) -> Result<()
 }
 
 // 以服务启动core
-pub(super) async fn run_core_by_service(config_file: &Path) -> Result<()> {
+pub(super) async fn run_core_by_service(config_file: &Path) -> Result<ServiceCoreStart> {
     SERVICE_MANAGER.refresh().await?;
 
     let status = SERVICE_MANAGER.current().await;
@@ -998,7 +1009,215 @@ pub(super) async fn run_core_by_service(config_file: &Path) -> Result<()> {
     }
 
     logging!(info, Type::Service, "服务已运行且版本匹配，直接使用");
-    start_with_existing_service(config_file).await
+    if let Some(adopted) = adopt_running_core(config_file).await {
+        return Ok(adopted);
+    }
+    start_with_existing_service(config_file).await?;
+    Ok(ServiceCoreStart::Started)
+}
+
+/// How the Service came to run the core for this app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ServiceCoreStart {
+    /// A new session started a new core.
+    Started,
+    /// The core the Service still ran for the previous app's session was taken over. `untouched`
+    /// when it is the same process and did not reload, so it keeps what it held only in memory.
+    Adopted { untouched: bool },
+}
+
+impl ServiceCoreStart {
+    /// Node selections go back to the profile's, except on a core that kept its own.
+    pub(crate) const fn restores_selections(self) -> bool {
+        !matches!(self, Self::Adopted { untouched: true })
+    }
+}
+
+/// Digests of the runtime `config_file` hands the Service.
+pub(super) async fn runtime_digests(config_file: &Path) -> Result<RuntimeDigests> {
+    let runtime = collect_service_runtime_bundle(config_file).await?;
+    service_session::digests(&runtime)
+}
+
+fn core_process_of(status: &ServiceStatusSnapshot) -> Option<CoreProcess> {
+    Some(CoreProcess {
+        pid: status.core_pid?,
+        started_at: status.core_started_at?,
+    })
+}
+
+async fn service_status(credentials: &OwnerCredentials) -> Result<ServiceStatusSnapshot> {
+    let response = clash_verge_service_ipc::get_status(credentials).await?;
+    if response.code != 0 {
+        bail!("service status returned {}: {}", response.code, response.message);
+    }
+    response.data.context("service status omitted data")
+}
+
+/// Keeps the session just started for the next app. Its runtime counts as loaded only when the
+/// assets read the same after the Service copied them.
+async fn record_started_session(
+    credentials: &OwnerCredentials,
+    runtime: &RuntimeBundle,
+    digests: Result<RuntimeDigests>,
+    generation: u64,
+    token: String,
+) {
+    let digests = match digests {
+        Ok(digests) => digests,
+        Err(error) => {
+            logging!(
+                warn,
+                Type::Service,
+                "the next app will restart the core, its runtime cannot be recognized: {error:#}"
+            );
+            return;
+        }
+    };
+    let after = service_session::digests(runtime).ok().and_then(|after| after.runtime);
+    let fingerprint = digests
+        .runtime
+        .filter(|before| after.as_deref() == Some(before.as_str()));
+    let process = match service_status(credentials).await {
+        Ok(status) => core_process_of(&status),
+        Err(error) => {
+            logging!(
+                warn,
+                Type::Service,
+                "failed to read the started core process: {error:#}"
+            );
+            None
+        }
+    };
+    let core = Config::verge().await.latest_arc().get_valid_clash_core();
+    service_session::record(SessionRecord::new(
+        generation,
+        token,
+        core.to_string(),
+        process,
+        digests.startup,
+        fingerprint,
+    ));
+}
+
+async fn running_core_version() -> Option<String> {
+    match tokio::time::timeout(Duration::from_secs(3), Handle::mihomo().get_version()).await {
+        Ok(Ok(version)) => Some(version.version),
+        _ => None,
+    }
+}
+
+/// The version of the core this app ships, which its installer published for the Service.
+async fn bundled_core_version(clash_core: &str) -> Option<String> {
+    let path = current_exe()
+        .ok()?
+        .with_file_name(format!("{clash_core}{}", std::env::consts::EXE_SUFFIX));
+    tokio::task::spawn_blocking(move || crate::feat::read_core_version(&path))
+        .await
+        .ok()?
+        .ok()
+}
+
+/// Adoption is tried once per app, at its first Service start.
+static ADOPTION_TRIED: AtomicBool = AtomicBool::new(false);
+
+/// Takes over the core the Service still runs for the previous app's session, so that an update
+/// or a crash of the app does not restart it. `None` leaves a new session to the caller.
+#[tracing::instrument(skip_all, level = "info", fields(outcome = tracing::field::Empty))]
+async fn adopt_running_core(config_file: &Path) -> Option<ServiceCoreStart> {
+    if ADOPTION_TRIED.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    let record = service_session::left_behind()?;
+    match adopt(config_file, record).await {
+        Ok(start) => {
+            tracing::Span::current().record("outcome", tracing::field::debug(start));
+            logging!(info, Type::Service, "took over the running core ({start:?})");
+            Some(start)
+        }
+        Err(reason) => {
+            tracing::Span::current().record("outcome", "declined");
+            logging!(
+                info,
+                Type::Service,
+                "starting a new core instead of taking over the running one: {reason:#}"
+            );
+            clear_active_service_session();
+            None
+        }
+    }
+}
+
+async fn adopt(config_file: &Path, record: SessionRecord) -> Result<ServiceCoreStart> {
+    let credentials = current_owner_credentials()?;
+    let status = service_status(&credentials).await?;
+    let clash_core = Config::verge().await.latest_arc().get_valid_clash_core();
+    let before = runtime_digests(config_file).await?;
+    let bundled_version = bundled_core_version(&clash_core).await;
+    let observed = Observed {
+        active_generation: status.active_generation.filter(|_| status.is_active),
+        running: status.core_pid.is_some() && status.desired_core_should_be_running,
+        core: clash_core.to_string(),
+        running_version: running_core_version().await,
+        bundled_version: bundled_version.clone(),
+        startup: before.startup.clone(),
+    };
+    service_session::admit(&record, &observed).map_err(|refusal| anyhow!("{refusal:?}"))?;
+
+    let capabilities = probe_service_capabilities().await;
+    if !capabilities.runtime_staging {
+        bail!("the service cannot stage a runtime in place");
+    }
+    let generation = record.generation;
+    let first_process = core_process_of(&status);
+    let mut process_changed = record.process != first_process;
+    let mut reload = service_session::needs_reload(&record, before.runtime.as_deref());
+    // The previous app may have ended before the profile's selections were all back on the core.
+    let restoring = record.restoring_selections;
+    *ACTIVE_SERVICE_SESSION.lock() = Some(ActiveServiceSession {
+        proof: OwnerSessionProof {
+            generation,
+            token: record.token.clone(),
+        },
+        supports_runtime_staging: capabilities.runtime_staging,
+        supports_runtime_file_read: capabilities.runtime_file_read,
+        supports_runtime_geo_read: capabilities.runtime_geo_read,
+    });
+    service_session::record(record);
+    service_session::begin_applying();
+
+    // Staging also proves the session: a stale token is refused.
+    let config_path = CoreManager::stage_for_adoption(config_file).await?;
+    let after = runtime_digests(config_file).await.ok().and_then(|after| after.runtime);
+    let stable = after.is_some() && after == before.runtime;
+    reload |= !stable;
+    if reload {
+        Handle::mihomo()
+            .reload_config(true, &config_path)
+            .await
+            .map_err(|error| anyhow!("the core did not reload: {error}"))?;
+    }
+
+    let status = service_status(&credentials).await?;
+    if !status.is_active || status.active_generation != Some(generation) || status.core_pid.is_none() {
+        bail!("the core stopped while being taken over");
+    }
+    let last_process = core_process_of(&status);
+    if last_process != first_process {
+        process_changed = true;
+        if !service_session::same_version(running_core_version().await.as_deref(), bundled_version.as_deref()) {
+            bail!("the watchdog started another core binary while it was being taken over");
+        }
+    }
+    service_session::finish_applying(before.runtime.filter(|_| stable), last_process);
+
+    start_owner_monitor();
+    PENDING_SERVICE_FALLBACK_NOTICE.lock().take();
+    PENDING_SERVICE_REPAIR_NOTICE.store(false, Ordering::Relaxed);
+    PENDING_SERVICE_OWNER_NOTICE.lock().take();
+    Ok(ServiceCoreStart::Adopted {
+        untouched: !reload && !process_changed && !restoring,
+    })
 }
 
 async fn capture_generation_before<F, Fut, T>(generation: &AtomicU64, operation: F) -> (u64, T)

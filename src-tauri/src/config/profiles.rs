@@ -1020,6 +1020,8 @@ fn activate_selected_nodes_with(repair: SelectionRepair) -> tokio::sync::oneshot
     let generation = ACTIVATE_SELECTED_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     let previous_task = active_task.take();
     let (first_pass_sender, first_pass_done) = tokio::sync::oneshot::channel();
+    // An app that ends before this finishes leaves the selections to the app adopting its core.
+    crate::core::service_session::set_restoring_selections(true);
 
     let handle = tokio::spawn(async move {
         // Dropping this releases the startup waiter on every early exit.
@@ -1059,6 +1061,13 @@ fn activate_selected_nodes_with(repair: SelectionRepair) -> tokio::sync::oneshot
                 announce(Refresh::Clash);
             }
             update_tray_after_activation(generation).await;
+            // A newer task may have begun during the await; the check and the flag change share
+            // the lock that task takes to begin.
+            let active_task = ACTIVATE_SELECTED_TASK.lock();
+            if is_activation_current(generation) {
+                crate::core::service_session::set_restoring_selections(false);
+            }
+            drop(active_task);
             logging!(debug, Type::Config, "activating selected nodes done!");
         }
     });
