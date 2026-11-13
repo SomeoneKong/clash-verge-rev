@@ -94,6 +94,7 @@ pub async fn restart_after_update() {
         "Restarting into the installed update, the core keeps running"
     );
     handle::Handle::global().set_is_exiting();
+    settle_config_updates().await;
     Config::apply_all_and_save_file().await;
     utils::server::shutdown_embedded_server();
     handle::Handle::app_handle().restart();
@@ -103,6 +104,7 @@ pub async fn restart_after_update() {
 /// A core under the service keeps running; a sidecar core goes with the app.
 pub async fn exit_for_update() -> ! {
     handle::Handle::global().set_is_exiting();
+    settle_config_updates().await;
     Config::apply_all_and_save_file().await;
     if matches!(
         *CoreManager::global().get_running_mode(),
@@ -115,6 +117,21 @@ pub async fn exit_for_update() -> ! {
         clean_async().await;
     }
     std::process::exit(0)
+}
+
+/// Lets a running configuration update end before the app leaves for an update. One still
+/// running after the wait makes the next app restart the core.
+pub async fn settle_config_updates() {
+    if !CoreManager::global()
+        .wait_for_config_updates(std::time::Duration::from_secs(10))
+        .await
+    {
+        logging!(
+            warn,
+            Type::System,
+            "A configuration update is still running; the updated app will restart the core"
+        );
+    }
 }
 
 fn after_change_clash_mode() {
