@@ -155,6 +155,7 @@ pub async fn change_clash_mode(mode: String) -> Result<(), String> {
     let json_value = serde_json::json!({
         "mode": mode
     });
+    crate::core::outdated_connections::before_publishing().await;
     if let Err(err) = handle::Handle::mihomo().patch_base_config(&json_value).await {
         logging!(error, Type::Core, "change clash mode failed: {err}");
         return Err(err.to_string().into());
