@@ -264,6 +264,90 @@ export interface TranslationResources {
         title: string
       }
     }
+    nodeLogin: {
+      actions: {
+        login: string
+        logout: string
+      }
+      currentProfile: string
+      empty: string
+      entry: string
+      errors: {
+        changed: string
+        loggedIn: string
+        rejected: string
+        startFailed: string
+        timeout: string
+      }
+      fields: {
+        addresses: string
+        controlServer: string
+        device: string
+        error: string
+        keyExpiry: string
+        user: string
+      }
+      loadFailed: string
+      login: {
+        approval: string
+        copied: string
+        copyLink: string
+        getLink: string
+        hideKey: string
+        keyLabel: string
+        keyNote: string
+        keySection: string
+        linkNote: string
+        linkSection: string
+        openLink: string
+        sharedTitle: string
+        showKey: string
+        submit: string
+        success: string
+        title: string
+        waiting: string
+      }
+      logout: {
+        configAuthKey: string
+        confirm: string
+        effect: string
+        ephemeral: string
+        sharedTarget: string
+        success: string
+        title: string
+      }
+      notes: {
+        conflict: string
+        controlServerDiffers: string
+        failed: string
+        inactive: string
+        invalid: string
+        keyExpired: string
+        needsApproval: string
+        pendingSettings: string
+        shared: string
+      }
+      officialServer: string
+      settings: {
+        authKey: string
+        controlServer: string
+        ephemeral: string
+        noAuthKey: string
+        notEphemeral: string
+      }
+      states: {
+        failed: string
+        needsApproval: string
+        needsLogin: string
+        notStarted: string
+        running: string
+        starting: string
+        stopped: string
+        unknown: string
+      }
+      title: string
+      unsupported: string
+    }
     profiles: {
       components: {
         card: {

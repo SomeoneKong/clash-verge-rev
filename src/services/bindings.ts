@@ -217,6 +217,14 @@ export const commands = {
     __TAURI_INVOKE<UsageReport_Serialize>('get_proxy_usage', { request }),
   exportProxyUsage: (path: string) =>
     __TAURI_INVOKE<null>('export_proxy_usage', { path }),
+  getProfileLoginNodes: () =>
+    __TAURI_INVOKE<LoginProfile[]>('get_profile_login_nodes'),
+  getNodeLogins: (profiles: LoginProfile[]) =>
+    __TAURI_INVOKE<NodeLogins>('get_node_logins', { profiles }),
+  loginNode: (name: string, instance: string, authKey: string | null) =>
+    __TAURI_INVOKE<NodeLoginOutcome>('login_node', { name, instance, authKey }),
+  logoutNode: (name: string, instance: string) =>
+    __TAURI_INVOKE<NodeLoginOutcome>('logout_node', { name, instance }),
   createWebdavBackup: () => __TAURI_INVOKE<null>('create_webdav_backup'),
   saveWebdavConfig: (url: string, username: string, password: string) =>
     __TAURI_INVOKE<null>('save_webdav_config', { url, username, password }),
@@ -272,6 +280,12 @@ export type CommandFailure_Serialize = {
   detail: string
   /**  Requested operation when known by the command. */
   operation?: FailedOperation | null
+}
+
+/**  A node as the config of a profile writes it. */
+export type ConfigNode = {
+  name: string
+  config: NodeConfig
 }
 
 /**  Why the Core is not running, kept until a Core starts again. */
@@ -577,10 +591,85 @@ export type LocalBackupFile = {
   content_length: number
 }
 
+/**  A profile with the nodes its config writes. */
+export type LoginProfile = {
+  uid: string
+  name: string
+  nodes: ConfigNode[]
+}
+
 export type NetworkInterfaceView = {
   name: string
   addr: InterfaceAddress[]
   mac_addr: string | null
+}
+
+/**  What the config of a node says about its login, without secrets. */
+export type NodeConfig = {
+  /**  Empty for the control server of Tailscale. */
+  controlUrl: string
+  /**
+   *  As the core resolved it for a node of the running config; as the config writes it, or
+   *  empty, for a node of another profile.
+   */
+  stateDir: string
+  ephemeral: boolean
+  /**  The config has an auth key, which logs the node in again whenever it starts logged out. */
+  configAuthKey: boolean
+}
+
+/**  How a login or logout of a node of the running config ended. */
+export type NodeLoginOutcome =
+  | { kind: 'done'; node: RunningNode }
+  /**  The core told why, with a code such as `logged_in`, `rejected`, `replaced` or `timeout`. */
+  | { kind: 'failed'; code: string; message: string }
+
+export type NodeLogins = {
+  /**  The core can log nodes in. */
+  supported: boolean
+  profiles: ProfileNodes[]
+}
+
+export type NodeRow = {
+  name: string
+  /**  The node as its own profile writes it. */
+  config: NodeConfig
+  /**
+   *  What the row shows the state of and acts on: the node itself in the running config, or
+   *  for another profile, the node of the running config it shares its identity with.
+   */
+  target: RunningNode | null
+  /**
+   *  The nodes of the running config a node of another profile shares its identity with,
+   *  when there are several, so none is the one to act on.
+   */
+  conflicts: string[]
+  /**  The core does not allow the state-dir of a node of another profile. */
+  invalid: boolean
+}
+
+export type NodeState =
+  | 'not_started'
+  | 'starting'
+  | 'needs_login'
+  /**  Waits for the admin of the control server to approve the device. */
+  | 'needs_approval'
+  | 'running'
+  | 'stopped'
+  | 'failed'
+  | 'unknown'
+
+export type NodeStatus = {
+  state: NodeState
+  /**  The device has an identity, whatever the state, as one whose key expired. */
+  identity: boolean
+  device: string
+  user: string
+  tailnet: string
+  addresses: string[]
+  keyExpiry: string | null
+  authUrl: string
+  error: string
 }
 
 export type NoticeStatus =
@@ -761,6 +850,13 @@ export type ProfileDnsSettings_Deserialize = {
 export type ProfileDnsSettings_Serialize = {
   enabled: boolean
   confirmation?: string | null
+}
+
+export type ProfileNodes = {
+  uid: string
+  name: string
+  current: boolean
+  nodes: NodeRow[]
 }
 
 export type ProfilePatch = ProfilePatch_Serialize | ProfilePatch_Deserialize
@@ -988,6 +1084,15 @@ export type RunStateView = {
 }
 
 export type RunningMode = 'Service' | 'Sidecar' | 'NotRunning'
+
+/**  A node of the running config, which logins and logouts act on. */
+export type RunningNode = {
+  name: string
+  /**  Tells this node apart from another one of the same name; logins and logouts carry it. */
+  instance: string
+  config: NodeConfig
+  status: NodeStatus
+}
 
 export type RuntimeLogs = { [key in string]: [string, string][] }
 

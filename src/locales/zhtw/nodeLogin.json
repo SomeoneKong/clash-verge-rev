@@ -1,0 +1,84 @@
+{
+  "entry": "節點登入",
+  "title": "節點登入",
+  "currentProfile": "目前設定檔",
+  "officialServer": "Tailscale 官方",
+  "empty": "目前沒有需要登入的節點，目前支援 tailscale 節點",
+  "unsupported": "目前核心不支援節點登入，請升級核心",
+  "loadFailed": "讀取節點狀態失敗：{{error}}",
+  "states": {
+    "notStarted": "未啟動",
+    "starting": "啟動中",
+    "needsLogin": "需要登入",
+    "needsApproval": "等待核准",
+    "running": "已登入",
+    "stopped": "已停止",
+    "failed": "失敗",
+    "unknown": "未知"
+  },
+  "fields": {
+    "device": "裝置",
+    "user": "帳號",
+    "addresses": "位址",
+    "controlServer": "控制伺服器",
+    "keyExpiry": "金鑰到期",
+    "error": "錯誤"
+  },
+  "actions": {
+    "login": "登入…",
+    "logout": "登出"
+  },
+  "settings": {
+    "controlServer": "控制伺服器 {{url}}",
+    "ephemeral": "臨時節點",
+    "notEphemeral": "非臨時節點",
+    "authKey": "寫了 auth-key",
+    "noAuthKey": "未寫 auth-key"
+  },
+  "notes": {
+    "shared": "與目前設定檔的 {{name}} 共用裝置身分",
+    "pendingSettings": "此設定檔的設定：{{settings}}，切換到此設定檔後生效",
+    "controlServerDiffers": "控制伺服器不同，切換後可能需要重新登入",
+    "conflict": "目前設定檔中有多個節點共用此裝置身分：{{names}}",
+    "inactive": "未啟用，切換到此設定檔後才能查看狀態和登入",
+    "invalid": "該節點的 state-dir 不被目前核心允許（只允許核心工作目錄與 SAFE_PATHS 下的路徑），需要修正設定",
+    "keyExpired": "金鑰已到期：可重新登入續期，或登出後用授權碼登入到其他帳號",
+    "needsApproval": "等待控制伺服器管理員核准裝置",
+    "failed": "修正後重新載入設定（如重新套用目前設定檔）"
+  },
+  "login": {
+    "title": "登入 {{name}}",
+    "sharedTitle": "登入目前設定檔的 {{name}}（與 {{profile}} 的 {{node}} 共用裝置身分）",
+    "keySection": "用授權碼登入",
+    "keyLabel": "授權碼",
+    "keyNote": "授權碼只用於這次登入，不會儲存",
+    "showKey": "顯示授權碼",
+    "hideKey": "隱藏授權碼",
+    "submit": "登入",
+    "waiting": "最長等待 {{seconds}} 秒",
+    "linkSection": "用瀏覽器登入",
+    "getLink": "取得登入連結",
+    "copyLink": "複製連結",
+    "openLink": "在瀏覽器中開啟",
+    "copied": "連結已複製",
+    "linkNote": "在瀏覽器中開啟連結完成登入；連接 Headscale 且未設定 OIDC 時，頁面會給出要在伺服器上執行的註冊指令。完成後這裡會自動變為已登入。",
+    "approval": "等待控制伺服器管理員核准裝置，核准後會自動變為已登入",
+    "success": "{{name}} 已登入：{{device}} {{addresses}}"
+  },
+  "logout": {
+    "title": "登出",
+    "confirm": "登出 {{name}}？",
+    "sharedTarget": "登出的是目前設定檔的 {{name}}（與 {{profile}} 的 {{node}} 共用裝置身分）",
+    "effect": "登出後經該節點的連線會失敗，需要重新登入才能使用",
+    "ephemeral": "該節點是臨時節點，裝置會從控制伺服器刪除",
+    "configAuthKey": "該節點的設定寫了 auth-key，下次啟動時會自動重新登入",
+    "success": "{{name}} 已登出"
+  },
+  "errors": {
+    "timeout": "尚未確認結果，請稍後查看節點狀態",
+    "changed": "節點已變化，請重新操作",
+    "loggedIn": "節點已有裝置身分，用授權碼登入前請先登出",
+    "rejected": "登入失敗：{{message}}",
+    "startFailed": "節點啟動失敗：{{message}}"
+  }
+}

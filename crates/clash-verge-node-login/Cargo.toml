@@ -1,0 +1,14 @@
+[package]
+name = "clash-verge-node-login"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+license = "GPL-3.0"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_yaml_ng = { workspace = true }
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+
+[lints]
+workspace = true

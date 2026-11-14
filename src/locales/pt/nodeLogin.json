@@ -1,0 +1,84 @@
+{
+  "entry": "Login de nós",
+  "title": "Login de nós",
+  "currentProfile": "Perfil atual",
+  "officialServer": "Tailscale (oficial)",
+  "empty": "Nenhum nó precisa de login. Por enquanto, nós tailscale são suportados.",
+  "unsupported": "O núcleo atual não suporta login de nós. Atualize o núcleo.",
+  "loadFailed": "Falha ao ler o status dos nós: {{error}}",
+  "states": {
+    "notStarted": "Não iniciado",
+    "starting": "Iniciando",
+    "needsLogin": "Precisa de login",
+    "needsApproval": "Aguardando aprovação",
+    "running": "Conectado",
+    "stopped": "Parado",
+    "failed": "Falhou",
+    "unknown": "Desconhecido"
+  },
+  "fields": {
+    "device": "Dispositivo",
+    "user": "Conta",
+    "addresses": "Endereços",
+    "controlServer": "Servidor de controle",
+    "keyExpiry": "Expiração da chave",
+    "error": "Erro"
+  },
+  "actions": {
+    "login": "Fazer login…",
+    "logout": "Sair"
+  },
+  "settings": {
+    "controlServer": "servidor de controle {{url}}",
+    "ephemeral": "nó efêmero",
+    "notEphemeral": "nó não efêmero",
+    "authKey": "com auth-key",
+    "noAuthKey": "sem auth-key"
+  },
+  "notes": {
+    "shared": "Compartilha a identidade do dispositivo com {{name}} do perfil atual",
+    "pendingSettings": "Configurações deste perfil, válidas após mudar para ele: {{settings}}",
+    "controlServerDiffers": "O servidor de controle é diferente; pode ser preciso fazer login de novo após a troca",
+    "conflict": "Vários nós do perfil atual compartilham esta identidade de dispositivo: {{names}}",
+    "inactive": "Inativo; mude para este perfil para ver o status e fazer login",
+    "invalid": "O núcleo não permite o state-dir deste nó (apenas caminhos sob o diretório de trabalho do núcleo e SAFE_PATHS); corrija a configuração",
+    "keyExpired": "A chave expirou: faça login de novo para renová-la, ou saia e faça login em outra conta com uma chave de autenticação",
+    "needsApproval": "Aguardando o administrador do servidor de controle aprovar o dispositivo",
+    "failed": "Corrija o problema e recarregue a configuração (por exemplo, aplique de novo o perfil atual)"
+  },
+  "login": {
+    "title": "Fazer login em {{name}}",
+    "sharedTitle": "Fazer login em {{name}} do perfil atual (compartilha a identidade do dispositivo com {{node}} de {{profile}})",
+    "keySection": "Login com chave de autenticação",
+    "keyLabel": "Chave de autenticação",
+    "keyNote": "A chave é usada apenas neste login e não é salva",
+    "showKey": "Mostrar chave",
+    "hideKey": "Ocultar chave",
+    "submit": "Fazer login",
+    "waiting": "Aguardando até {{seconds}} segundos",
+    "linkSection": "Login pelo navegador",
+    "getLink": "Obter link de login",
+    "copyLink": "Copiar link",
+    "openLink": "Abrir no navegador",
+    "copied": "Link copiado",
+    "linkNote": "Abra o link em um navegador para concluir o login. Com Headscale sem OIDC, a página mostra um comando a ser executado no servidor para registrar o dispositivo. Ao concluir, o nó aparecerá aqui como conectado.",
+    "approval": "Aguardando o administrador do servidor de controle aprovar o dispositivo; ele aparecerá como conectado após a aprovação",
+    "success": "{{name}} conectado: {{device}} {{addresses}}"
+  },
+  "logout": {
+    "title": "Sair",
+    "confirm": "Sair de {{name}}?",
+    "sharedTarget": "Sai de {{name}} do perfil atual (que compartilha a identidade do dispositivo com {{node}} de {{profile}})",
+    "effect": "Conexões por este nó falharão até que ele faça login novamente",
+    "ephemeral": "Este é um nó efêmero: o dispositivo será removido do servidor de controle",
+    "configAuthKey": "A configuração deste nó define um auth-key, então ele fará login de novo automaticamente na próxima inicialização",
+    "success": "{{name}} desconectado"
+  },
+  "errors": {
+    "timeout": "Ainda sem resultado; verifique o status do nó mais tarde",
+    "changed": "O nó mudou; tente novamente",
+    "loggedIn": "O nó já tem uma identidade de dispositivo; saia antes de fazer login com uma chave de autenticação",
+    "rejected": "Falha no login: {{message}}",
+    "startFailed": "Falha ao iniciar o nó: {{message}}"
+  }
+}

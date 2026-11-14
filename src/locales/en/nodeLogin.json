@@ -1,0 +1,84 @@
+{
+  "entry": "Node Login",
+  "title": "Node Login",
+  "currentProfile": "Current profile",
+  "officialServer": "Tailscale (official)",
+  "empty": "No nodes need to log in. Tailscale nodes are supported for now.",
+  "unsupported": "The current core does not support node login. Please upgrade the core.",
+  "loadFailed": "Failed to read the node status: {{error}}",
+  "states": {
+    "notStarted": "Not started",
+    "starting": "Starting",
+    "needsLogin": "Needs login",
+    "needsApproval": "Awaiting approval",
+    "running": "Logged in",
+    "stopped": "Stopped",
+    "failed": "Failed",
+    "unknown": "Unknown"
+  },
+  "fields": {
+    "device": "Device",
+    "user": "Account",
+    "addresses": "Addresses",
+    "controlServer": "Control server",
+    "keyExpiry": "Key expiry",
+    "error": "Error"
+  },
+  "actions": {
+    "login": "Log in…",
+    "logout": "Log out"
+  },
+  "settings": {
+    "controlServer": "control server {{url}}",
+    "ephemeral": "ephemeral node",
+    "notEphemeral": "not an ephemeral node",
+    "authKey": "auth-key set",
+    "noAuthKey": "no auth-key"
+  },
+  "notes": {
+    "shared": "Shares its device identity with {{name}} of the current profile",
+    "pendingSettings": "Settings of this profile, which take effect after switching to it: {{settings}}",
+    "controlServerDiffers": "The control server differs; you may need to log in again after switching",
+    "conflict": "Several nodes of the current profile share this device identity: {{names}}",
+    "inactive": "Not active; switch to this profile to see its status and log in",
+    "invalid": "The core does not allow the state-dir of this node (only paths under the core's working directory and SAFE_PATHS); fix the config",
+    "keyExpired": "The key has expired: log in again to renew it, or log out and log in to another account with an auth key",
+    "needsApproval": "Waiting for the admin of the control server to approve the device",
+    "failed": "Fix the problem, then reload the config (for example, apply the current profile again)"
+  },
+  "login": {
+    "title": "Log in {{name}}",
+    "sharedTitle": "Log in {{name}} of the current profile (shares its device identity with {{node}} of {{profile}})",
+    "keySection": "Log in with an auth key",
+    "keyLabel": "Auth key",
+    "keyNote": "The auth key is used for this login only and is not saved",
+    "showKey": "Show auth key",
+    "hideKey": "Hide auth key",
+    "submit": "Log in",
+    "waiting": "Waiting up to {{seconds}} seconds",
+    "linkSection": "Log in with a browser",
+    "getLink": "Get login link",
+    "copyLink": "Copy link",
+    "openLink": "Open in browser",
+    "copied": "Link copied",
+    "linkNote": "Open the link in a browser to finish logging in. With Headscale without OIDC, the page shows a command to run on the server to register the device. The node shows as logged in here once done.",
+    "approval": "Waiting for the admin of the control server to approve the device; it shows as logged in once approved",
+    "success": "{{name}} logged in: {{device}} {{addresses}}"
+  },
+  "logout": {
+    "title": "Log out",
+    "confirm": "Log out {{name}}?",
+    "sharedTarget": "This logs out {{name}} of the current profile (which shares its device identity with {{node}} of {{profile}})",
+    "effect": "Connections through this node will fail until it logs in again",
+    "ephemeral": "This is an ephemeral node: the device will be removed from the control server",
+    "configAuthKey": "The config of this node sets an auth-key, so it logs in again automatically the next time it starts",
+    "success": "{{name}} logged out"
+  },
+  "errors": {
+    "timeout": "No result yet; check the status of the node later",
+    "changed": "The node has changed; please try again",
+    "loggedIn": "The node has a device identity; log it out before logging in with an auth key",
+    "rejected": "Login failed: {{message}}",
+    "startFailed": "The node failed to start: {{message}}"
+  }
+}

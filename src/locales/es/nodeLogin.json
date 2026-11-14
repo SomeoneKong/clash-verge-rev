@@ -1,0 +1,84 @@
+{
+  "entry": "Inicio de sesión de nodos",
+  "title": "Inicio de sesión de nodos",
+  "currentProfile": "Perfil actual",
+  "officialServer": "Tailscale (oficial)",
+  "empty": "No hay nodos que necesiten iniciar sesión. Por ahora se admiten nodos tailscale.",
+  "unsupported": "El núcleo actual no admite el inicio de sesión de nodos. Actualice el núcleo.",
+  "loadFailed": "No se pudo leer el estado de los nodos: {{error}}",
+  "states": {
+    "notStarted": "Sin iniciar",
+    "starting": "Iniciando",
+    "needsLogin": "Requiere inicio de sesión",
+    "needsApproval": "Esperando aprobación",
+    "running": "Sesión iniciada",
+    "stopped": "Detenido",
+    "failed": "Fallido",
+    "unknown": "Desconocido"
+  },
+  "fields": {
+    "device": "Dispositivo",
+    "user": "Cuenta",
+    "addresses": "Direcciones",
+    "controlServer": "Servidor de control",
+    "keyExpiry": "Caducidad de la clave",
+    "error": "Error"
+  },
+  "actions": {
+    "login": "Iniciar sesión…",
+    "logout": "Cerrar sesión"
+  },
+  "settings": {
+    "controlServer": "servidor de control {{url}}",
+    "ephemeral": "nodo efímero",
+    "notEphemeral": "nodo no efímero",
+    "authKey": "con auth-key",
+    "noAuthKey": "sin auth-key"
+  },
+  "notes": {
+    "shared": "Comparte la identidad de dispositivo con {{name}} del perfil actual",
+    "pendingSettings": "Ajustes de este perfil, efectivos al cambiar a él: {{settings}}",
+    "controlServerDiffers": "El servidor de control es distinto; puede que tenga que iniciar sesión de nuevo tras cambiar",
+    "conflict": "Varios nodos del perfil actual comparten esta identidad de dispositivo: {{names}}",
+    "inactive": "Inactivo; cambie a este perfil para ver su estado e iniciar sesión",
+    "invalid": "El núcleo no permite el state-dir de este nodo (solo rutas bajo el directorio de trabajo del núcleo y SAFE_PATHS); corrija la configuración",
+    "keyExpired": "La clave ha caducado: inicie sesión de nuevo para renovarla, o cierre sesión e inicie sesión en otra cuenta con una clave de autenticación",
+    "needsApproval": "Esperando a que el administrador del servidor de control apruebe el dispositivo",
+    "failed": "Corrija el problema y vuelva a cargar la configuración (por ejemplo, aplique de nuevo el perfil actual)"
+  },
+  "login": {
+    "title": "Iniciar sesión en {{name}}",
+    "sharedTitle": "Iniciar sesión en {{name}} del perfil actual (comparte la identidad de dispositivo con {{node}} de {{profile}})",
+    "keySection": "Iniciar sesión con una clave de autenticación",
+    "keyLabel": "Clave de autenticación",
+    "keyNote": "La clave solo se usa para este inicio de sesión y no se guarda",
+    "showKey": "Mostrar clave",
+    "hideKey": "Ocultar clave",
+    "submit": "Iniciar sesión",
+    "waiting": "Esperando hasta {{seconds}} segundos",
+    "linkSection": "Iniciar sesión con el navegador",
+    "getLink": "Obtener enlace de inicio de sesión",
+    "copyLink": "Copiar enlace",
+    "openLink": "Abrir en el navegador",
+    "copied": "Enlace copiado",
+    "linkNote": "Abra el enlace en un navegador para completar el inicio de sesión. Con Headscale sin OIDC, la página muestra un comando que debe ejecutarse en el servidor para registrar el dispositivo. Al terminar, el nodo aparecerá aquí con la sesión iniciada.",
+    "approval": "Esperando a que el administrador del servidor de control apruebe el dispositivo; aparecerá con la sesión iniciada una vez aprobado",
+    "success": "{{name}} ha iniciado sesión: {{device}} {{addresses}}"
+  },
+  "logout": {
+    "title": "Cerrar sesión",
+    "confirm": "¿Cerrar la sesión de {{name}}?",
+    "sharedTarget": "Se cierra la sesión de {{name}} del perfil actual (comparte la identidad de dispositivo con {{node}} de {{profile}})",
+    "effect": "Las conexiones a través de este nodo fallarán hasta que vuelva a iniciar sesión",
+    "ephemeral": "Es un nodo efímero: el dispositivo se eliminará del servidor de control",
+    "configAuthKey": "La configuración de este nodo incluye un auth-key, así que volverá a iniciar sesión automáticamente la próxima vez que se inicie",
+    "success": "Sesión de {{name}} cerrada"
+  },
+  "errors": {
+    "timeout": "Aún no hay resultado; compruebe el estado del nodo más tarde",
+    "changed": "El nodo ha cambiado; inténtelo de nuevo",
+    "loggedIn": "El nodo tiene una identidad de dispositivo; cierre la sesión antes de iniciarla con una clave de autenticación",
+    "rejected": "Error al iniciar sesión: {{message}}",
+    "startFailed": "El nodo no pudo iniciarse: {{message}}"
+  }
+}
