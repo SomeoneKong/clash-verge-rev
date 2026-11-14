@@ -1,0 +1,84 @@
+{
+  "entry": "Login Node",
+  "title": "Login Node",
+  "currentProfile": "Profil saat ini",
+  "officialServer": "Tailscale (resmi)",
+  "empty": "Tidak ada node yang perlu login. Saat ini node tailscale didukung.",
+  "unsupported": "Core saat ini tidak mendukung login node. Silakan perbarui core.",
+  "loadFailed": "Gagal membaca status node: {{error}}",
+  "states": {
+    "notStarted": "Belum dimulai",
+    "starting": "Memulai",
+    "needsLogin": "Perlu login",
+    "needsApproval": "Menunggu persetujuan",
+    "running": "Sudah login",
+    "stopped": "Berhenti",
+    "failed": "Gagal",
+    "unknown": "Tidak diketahui"
+  },
+  "fields": {
+    "device": "Perangkat",
+    "user": "Akun",
+    "addresses": "Alamat",
+    "controlServer": "Server kontrol",
+    "keyExpiry": "Kedaluwarsa kunci",
+    "error": "Kesalahan"
+  },
+  "actions": {
+    "login": "Login…",
+    "logout": "Logout"
+  },
+  "settings": {
+    "controlServer": "server kontrol {{url}}",
+    "ephemeral": "node sementara",
+    "notEphemeral": "bukan node sementara",
+    "authKey": "ada auth-key",
+    "noAuthKey": "tanpa auth-key"
+  },
+  "notes": {
+    "shared": "Berbagi identitas perangkat dengan {{name}} di profil saat ini",
+    "pendingSettings": "Pengaturan profil ini, berlaku setelah beralih ke profil ini: {{settings}}",
+    "controlServerDiffers": "Server kontrol berbeda; mungkin perlu login lagi setelah beralih",
+    "conflict": "Beberapa node di profil saat ini berbagi identitas perangkat ini: {{names}}",
+    "inactive": "Tidak aktif; beralih ke profil ini untuk melihat status dan login",
+    "invalid": "Core tidak mengizinkan state-dir node ini (hanya jalur di bawah direktori kerja core dan SAFE_PATHS); perbaiki konfigurasi",
+    "keyExpired": "Kunci telah kedaluwarsa: login lagi untuk memperbaruinya, atau logout lalu login ke akun lain dengan kunci autentikasi",
+    "needsApproval": "Menunggu admin server kontrol menyetujui perangkat",
+    "failed": "Perbaiki masalahnya, lalu muat ulang konfigurasi (misalnya terapkan ulang profil saat ini)"
+  },
+  "login": {
+    "title": "Login {{name}}",
+    "sharedTitle": "Login {{name}} di profil saat ini (berbagi identitas perangkat dengan {{node}} dari {{profile}})",
+    "keySection": "Login dengan kunci autentikasi",
+    "keyLabel": "Kunci autentikasi",
+    "keyNote": "Kunci hanya dipakai untuk login ini dan tidak disimpan",
+    "showKey": "Tampilkan kunci",
+    "hideKey": "Sembunyikan kunci",
+    "submit": "Login",
+    "waiting": "Menunggu hingga {{seconds}} detik",
+    "linkSection": "Login dengan browser",
+    "getLink": "Dapatkan tautan login",
+    "copyLink": "Salin tautan",
+    "openLink": "Buka di browser",
+    "copied": "Tautan disalin",
+    "linkNote": "Buka tautan di browser untuk menyelesaikan login. Dengan Headscale tanpa OIDC, halaman menampilkan perintah yang harus dijalankan di server untuk mendaftarkan perangkat. Setelah selesai, node otomatis tampil sudah login di sini.",
+    "approval": "Menunggu admin server kontrol menyetujui perangkat; akan tampil sudah login setelah disetujui",
+    "success": "{{name}} sudah login: {{device}} {{addresses}}"
+  },
+  "logout": {
+    "title": "Logout",
+    "confirm": "Logout dari {{name}}?",
+    "sharedTarget": "Yang di-logout adalah {{name}} di profil saat ini (berbagi identitas perangkat dengan {{node}} dari {{profile}})",
+    "effect": "Koneksi melalui node ini akan gagal sampai login lagi",
+    "ephemeral": "Ini node sementara: perangkat akan dihapus dari server kontrol",
+    "configAuthKey": "Konfigurasi node ini memiliki auth-key, jadi node akan login lagi otomatis saat dimulai berikutnya",
+    "success": "{{name}} sudah logout"
+  },
+  "errors": {
+    "timeout": "Belum ada hasil; periksa status node nanti",
+    "changed": "Node telah berubah; silakan coba lagi",
+    "loggedIn": "Node sudah memiliki identitas perangkat; logout dulu sebelum login dengan kunci autentikasi",
+    "rejected": "Login gagal: {{message}}",
+    "startFailed": "Node gagal dimulai: {{message}}"
+  }
+}

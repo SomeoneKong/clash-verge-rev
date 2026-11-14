@@ -1,0 +1,84 @@
+{
+  "entry": "节点登录",
+  "title": "节点登录",
+  "currentProfile": "当前配置",
+  "officialServer": "Tailscale 官方",
+  "empty": "当前没有需要登录的节点，目前支持 tailscale 节点",
+  "unsupported": "当前内核不支持节点登录，请升级内核",
+  "loadFailed": "读取节点状态失败：{{error}}",
+  "states": {
+    "notStarted": "未启动",
+    "starting": "启动中",
+    "needsLogin": "需要登录",
+    "needsApproval": "等待批准",
+    "running": "已登录",
+    "stopped": "已停止",
+    "failed": "失败",
+    "unknown": "未知"
+  },
+  "fields": {
+    "device": "设备",
+    "user": "账号",
+    "addresses": "地址",
+    "controlServer": "控制服务器",
+    "keyExpiry": "密钥过期",
+    "error": "错误"
+  },
+  "actions": {
+    "login": "登录…",
+    "logout": "退出登录"
+  },
+  "settings": {
+    "controlServer": "控制服务器 {{url}}",
+    "ephemeral": "临时节点",
+    "notEphemeral": "非临时节点",
+    "authKey": "写了 auth-key",
+    "noAuthKey": "未写 auth-key"
+  },
+  "notes": {
+    "shared": "与当前配置的 {{name}} 共用设备身份",
+    "pendingSettings": "此配置的设置：{{settings}}，切换到此配置后生效",
+    "controlServerDiffers": "控制服务器不同，切换后可能需要重新登录",
+    "conflict": "当前配置中有多个节点共用此设备身份：{{names}}",
+    "inactive": "未启用，切换到此配置后才能查看状态和登录",
+    "invalid": "该节点的 state-dir 不被当前内核允许（只允许内核工作目录与 SAFE_PATHS 下的路径），需要修正配置",
+    "keyExpired": "密钥已过期：可重新登录续期，或退出登录后用授权码登录到其它账号",
+    "needsApproval": "等待控制服务器管理员批准设备",
+    "failed": "修正后重新加载配置（如重新应用当前配置）"
+  },
+  "login": {
+    "title": "登录 {{name}}",
+    "sharedTitle": "登录当前配置的 {{name}}（与 {{profile}} 的 {{node}} 共用设备身份）",
+    "keySection": "用授权码登录",
+    "keyLabel": "授权码",
+    "keyNote": "授权码只用于这次登录，不会保存",
+    "showKey": "显示授权码",
+    "hideKey": "隐藏授权码",
+    "submit": "登录",
+    "waiting": "最长等待 {{seconds}} 秒",
+    "linkSection": "用浏览器登录",
+    "getLink": "获取登录链接",
+    "copyLink": "复制链接",
+    "openLink": "在浏览器中打开",
+    "copied": "链接已复制",
+    "linkNote": "在浏览器中打开链接完成登录；接 Headscale 且未配置 OIDC 时，页面会给出要在服务器上执行的注册命令。完成后这里会自动变为已登录。",
+    "approval": "等待控制服务器管理员批准设备，批准后会自动变为已登录",
+    "success": "{{name}} 已登录：{{device}} {{addresses}}"
+  },
+  "logout": {
+    "title": "退出登录",
+    "confirm": "退出 {{name}} 的登录？",
+    "sharedTarget": "退出的是当前配置的 {{name}}（与 {{profile}} 的 {{node}} 共用设备身份）",
+    "effect": "退出后经该节点的连接会失败，需要重新登录才能使用",
+    "ephemeral": "该节点是临时节点，设备会从控制服务器删除",
+    "configAuthKey": "该节点的配置写了 auth-key，下次启动时会自动重新登录",
+    "success": "{{name}} 已退出登录"
+  },
+  "errors": {
+    "timeout": "尚未确认结果，请稍后查看节点状态",
+    "changed": "节点已变化，请重新操作",
+    "loggedIn": "节点已有设备身份，用授权码登录前请先退出登录",
+    "rejected": "登录失败：{{message}}",
+    "startFailed": "节点启动失败：{{message}}"
+  }
+}
