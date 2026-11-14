@@ -812,6 +812,9 @@ impl CoreManager {
             anyhow::bail!("invalid clash core: {clash_core}");
         }
 
+        // Held until the core is updated: nothing is written while the configuration is owned
+        // elsewhere, such as by a core upgrade.
+        let _config_write = Config::try_lock_config_write()?;
         Config::verge().await.edit_draft(|d| {
             d.clash_core = Some(clash_core.to_owned());
         });

@@ -1,5 +1,5 @@
 mod config;
-pub(crate) use config::ConfigUpdateGuard;
+pub(crate) use config::{ConfigOwnership, ConfigUpdateGuard, runtime_is_fallback};
 mod lifecycle;
 mod state;
 

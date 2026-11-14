@@ -10,11 +10,11 @@ use clash_verge_updater::audit::{AuditLog, Components, CoreChange, Record, Sourc
 use clash_verge_updater::manifest::{Kind, Manifest, Role};
 use clash_verge_updater::paths::{Paths, SYSTEMD_UNIT};
 use clash_verge_updater::payload::Payload;
-use clash_verge_updater::state::{Initiator, ProcessRef, Txn, write_atomic};
+use clash_verge_updater::state::{Initiator, ProcessRef, State, Txn, write_atomic};
 use clash_verge_updater::sys;
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -26,6 +26,9 @@ pub const SYSTEM_VERSION_TRUSTED: bool = true;
 const PACKAGE: &str = "clash-verge";
 const SERVICE_ROOT: &str = "/var/lib/clash-verge-service";
 const UNIT_FILE: &str = "/etc/systemd/system/clash-verge-updater.service";
+/// Where the package puts the app's cores and the service tool.
+const BIN_DIR: &str = "/usr/bin";
+const TOOL: &str = "clash-verge-service-install";
 const DPKG_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// `(status, version)` of the package, as dpkg records it.
@@ -63,6 +66,34 @@ pub const fn check_ready(_manifest: &Manifest) -> Result<()> {
     Ok(())
 }
 
+/// A core upgrade writes the app's cores in the package's directory and runs the package's service
+/// tool, so both must be root's alone.
+pub fn check_ready_core(_paths: &Paths, _state: &State) -> Result<()> {
+    ensure!(super::root_only(Path::new(BIN_DIR)), "{BIN_DIR} is not protected");
+    if service_installed() {
+        ensure!(
+            super::root_only(&Path::new(BIN_DIR).join(TOOL)),
+            "the service tool is missing or not protected"
+        );
+    }
+    Ok(())
+}
+
+pub fn service_installed() -> bool {
+    Path::new(SERVICE_ROOT).join("bin/clash-verge-service").exists()
+}
+
+fn approved_core(name: &str) -> PathBuf {
+    Path::new(SERVICE_ROOT).join("cores").join(name)
+}
+
+pub fn approved_cores() -> Vec<(String, PathBuf)> {
+    ["verge-mihomo", "verge-mihomo-alpha"]
+        .into_iter()
+        .map(|name| (name.to_owned(), approved_core(name)))
+        .collect()
+}
+
 fn unit_name(id: &str) -> String {
     format!("clash-verge-update-{id}")
 }
@@ -74,8 +105,15 @@ pub fn spawn_worker(paths: &Paths, id: &str) -> Result<ProcessRef> {
     let copy = bin.join("clash-verge-updater");
     clash_verge_updater::state::copy_synced(&std::env::current_exe()?, &copy)?;
     std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755))?;
+    let before = crate::journal::worker_count(&paths.txn_dir(id));
+    // A core upgrade being undone starts a second worker, in a unit of its own.
+    let unit = if before == 0 {
+        unit_name(id)
+    } else {
+        format!("{}-{before}", unit_name(id))
+    };
     let mut command = Command::new("systemd-run");
-    command.args(["--quiet", &format!("--unit={}", unit_name(id))]);
+    command.args(["--quiet", &format!("--unit={unit}")]);
     command.arg(format!("--setenv=CLASH_VERGE_UPDATE_TXN={id}"));
     if let Some(gid) = config(paths).service_gid {
         command.arg(format!("--setenv=CLASH_VERGE_SERVICE_GID={gid}"));
@@ -84,22 +122,23 @@ pub fn spawn_worker(paths: &Paths, id: &str) -> Result<ProcessRef> {
     let status = command.status().context("failed to run systemd-run")?;
     ensure!(status.success(), "systemd-run failed ({status})");
     // The worker registers itself first thing; wait for it to learn its identity.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Ok(entries) = crate::journal::read(&paths.txn_dir(id))
-            && let Some(worker) = crate::journal::writers(&entries).into_iter().next()
-        {
-            return Ok(worker);
-        }
-        ensure!(Instant::now() < deadline, "the worker did not start");
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    crate::journal::await_worker(&paths.txn_dir(id), before, Duration::from_secs(10))
+}
+
+/// The units the workers of a transaction run in: the one applying it, and the one undoing a core
+/// upgrade.
+fn worker_units(id: &str) -> [String; 2] {
+    [
+        format!("{}.service", unit_name(id)),
+        format!("{}-1.service", unit_name(id)),
+    ]
 }
 
 /// Stops an overrunning worker's unit, and with it every writer it started.
 pub fn stop_worker(txn: &Txn, _worker: Option<ProcessRef>) {
-    let unit = format!("{}.service", unit_name(&txn.id));
-    let _ = Command::new("systemctl").args(["stop", &unit]).status();
+    for unit in worker_units(&txn.id) {
+        let _ = Command::new("systemctl").args(["stop", &unit]).status();
+    }
 }
 
 pub fn layout_trusted(paths: &Paths) -> bool {
@@ -107,9 +146,10 @@ pub fn layout_trusted(paths: &Paths) -> bool {
 }
 
 pub fn worker_scope_active(id: &str) -> bool {
-    let unit = format!("{}.service", unit_name(id));
-    run_output("systemctl", &["show", "-p", "ActiveState", "--value", &unit])
-        .is_some_and(|state| matches!(state.as_str(), "active" | "activating" | "deactivating" | "reloading"))
+    worker_units(id).iter().any(|unit| {
+        run_output("systemctl", &["show", "-p", "ActiveState", "--value", unit])
+            .is_some_and(|state| matches!(state.as_str(), "active" | "activating" | "deactivating" | "reloading"))
+    })
 }
 
 /// The GUI stays up while the package installs and restarts itself.
@@ -117,22 +157,35 @@ pub const fn relaunch_gui(_initiator: &Initiator) -> Result<bool> {
     Ok(false)
 }
 
-/// Runs a writer for `step` and registers it in the journal. It runs inside the worker's unit,
-/// whose processes systemd ends when the worker ends, so it cannot outlive the transaction even
-/// in the moment before it is registered. Returns its exit code.
+/// Runs a writer for `step` and registers it in the journal first: the process starts as a shell
+/// waiting for the go-ahead, which comes once it is registered, and becomes the writer only then.
+/// Started by a process that stops before that (a recovery run by hand, outside any unit), it
+/// never runs. Returns its exit code.
 fn run_writer(journal: &Journal, step: u32, program: &str, args: &[&str], envs: &[(&str, &str)]) -> Result<i32> {
-    let mut child = Command::new(program)
+    use std::io::Write as _;
+    let (reader, mut go) = std::io::pipe()?;
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", r#"read -r _ && exec "$0" "$@""#])
+        .arg(program)
         .args(args)
         .envs(envs.iter().copied())
+        .current_dir("/")
+        .stdin(reader)
         .spawn()
         .with_context(|| format!("failed to start {program}"))?;
-    let registered = journal.writer(
-        step,
-        ProcessRef {
-            pid: child.id(),
-            created: sys::process_created(child.id()).unwrap_or_default(),
-        },
-    );
+    let registered = sys::process_created(child.id())
+        .context("the writer did not start")
+        .and_then(|created| {
+            journal.writer(
+                step,
+                ProcessRef {
+                    pid: child.id(),
+                    created,
+                },
+            )
+        })
+        .and_then(|()| go.write_all(b"\n").map_err(Into::into));
+    drop(go);
     if let Err(error) = registered {
         let _ = child.kill();
         let _ = child.wait();
@@ -145,6 +198,7 @@ fn run_writer(journal: &Journal, step: u32, program: &str, args: &[&str], envs: 
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
+            let _ = child.wait();
             bail!("{program} did not finish in time");
         }
         std::thread::sleep(Duration::from_millis(200));
@@ -152,6 +206,9 @@ fn run_writer(journal: &Journal, step: u32, program: &str, args: &[&str], envs: 
 }
 
 pub fn apply(paths: &Paths, txn: &Txn, payload: &Payload, journal: &mut Journal) -> Result<Components> {
+    if txn.kind == Kind::Core {
+        return apply_core(paths, txn, payload, journal);
+    }
     ensure!(
         txn.kind == Kind::Deb,
         "a {:?} payload does not apply to Linux",
@@ -218,8 +275,215 @@ pub fn apply(paths: &Paths, txn: &Txn, payload: &Payload, journal: &mut Journal)
     })
 }
 
-pub fn undo(_paths: &Paths, txn: &Txn, entry: &Entry, _done: bool, _writers_started: bool) -> Result<Undo> {
+/// Upgrades the cores alone: publishes the core of a core payload to the service under both names
+/// with the package's service tool, then replaces the app's cores beside it.
+fn apply_core(paths: &Paths, txn: &Txn, payload: &Payload, journal: &mut Journal) -> Result<Components> {
+    check_ready_core(paths, &State::default())?;
+    let copies = super::core_copies(paths, txn, payload)?;
+    let backup_dir = paths.txn_dir(&txn.id).join("backup");
+    let gid = config(paths).service_gid.map(|gid| gid.to_string());
+    let envs: Vec<(&str, &str)> = gid
+        .as_deref()
+        .map(|gid| vec![("CLASH_VERGE_SERVICE_GID", gid)])
+        .unwrap_or_default();
+    let mut components = Components::default();
+    if service_installed() {
+        let tools = paths.txn_dir(&txn.id).join("tools");
+        super::create_dir_durable(&tools)?;
+        let tool = tools.join(TOOL);
+        clash_verge_updater::state::copy_synced(&Path::new(BIN_DIR).join(TOOL), &tool)?;
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))?;
+        super::sync_published(&tool)?;
+        for (core, copy) in &copies {
+            let approved = approved_core(&core.name);
+            super::check_approved(&approved)?;
+            let current = super::existing_sha(&approved)?;
+            if current.as_deref() == Some(core.sha256.as_str()) {
+                continue;
+            }
+            // The tool takes the core's name from the file name, so the backup keeps it.
+            let backup = match current {
+                Some(_) => {
+                    let dir = backup_dir.join("approved");
+                    super::create_dir_durable(&dir)?;
+                    let backup = dir.join(&core.name);
+                    super::copy_keeping_time(&approved, &backup)?;
+                    Some(backup)
+                }
+                None => None,
+            };
+            let step = journal.intent(
+                "publish_core",
+                json!({ "name": core.name, "old_sha": current, "new_sha": core.sha256, "backup": backup, "tool": tool }),
+            )?;
+            let source = copy.to_string_lossy().into_owned();
+            let args = ["--install-core", source.as_str(), "--sha256", core.sha256.as_str()];
+            let code = run_writer(journal, step, &tool.to_string_lossy(), &args, &envs)?;
+            ensure!(code == 0, "publishing {} to the service failed ({code})", core.name);
+            super::sync_published(&approved)?;
+            journal.done(step)?;
+            components.cores.push(CoreChange {
+                name: core.name.clone(),
+                from: None,
+                to: core.version.clone(),
+            });
+        }
+    }
+    for (core, copy) in &copies {
+        let target = Path::new(BIN_DIR).join(&core.name);
+        let current = super::existing_sha(&target)?;
+        if current.as_deref() == Some(core.sha256.as_str()) {
+            continue;
+        }
+        let backup = match current {
+            Some(_) => {
+                let dir = backup_dir.join("app");
+                super::create_dir_durable(&dir)?;
+                let backup = dir.join(&core.name);
+                super::copy_keeping_time(&target, &backup)?;
+                Some(backup)
+            }
+            None => None,
+        };
+        let step = journal.intent(
+            "replace_file",
+            json!({ "target": target, "old_sha": current, "new_sha": core.sha256, "backup": backup }),
+        )?;
+        put_file(copy, &target, &txn.id)?;
+        journal.done(step)?;
+    }
+    Ok(components)
+}
+
+/// Puts a copy of `source` at `target`, with its mode and time, as one rename from beside it.
+fn put_file(source: &Path, target: &Path, id: &str) -> Result<()> {
+    let dir = target.parent().context("no directory")?;
+    let name = target.file_name().context("no file name")?.to_string_lossy();
+    let temp = dir.join(format!(".{name}.{id}.new"));
+    super::copy_keeping_time(source, &temp)?;
+    std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755))?;
+    std::fs::rename(&temp, target).with_context(|| format!("failed to replace {}", target.display()))?;
+    clash_verge_updater::state::sync_parent(target)
+}
+
+fn json_str(value: &serde_json::Value, key: &str) -> Option<String> {
+    value[key].as_str().map(str::to_owned)
+}
+
+/// Confirms the service's approved cores and the app's are the payload's, and the service runs.
+pub fn verify_core(manifest: &Manifest) -> Result<()> {
+    let installed = service_installed();
+    for core in &manifest.cores {
+        ensure!(
+            sha(&Path::new(BIN_DIR).join(&core.name)).as_deref() == Some(core.sha256.as_str()),
+            "the app has a different {}",
+            core.name
+        );
+        if installed {
+            ensure!(
+                sha(&approved_core(&core.name)).as_deref() == Some(core.sha256.as_str()),
+                "the service has a different {}",
+                core.name
+            );
+        }
+    }
+    if installed {
+        ensure!(
+            run_output("systemctl", &["is-active", "clash-verge-service"]).as_deref() == Some("active"),
+            "the service is not running"
+        );
+    }
+    Ok(())
+}
+
+/// What undoing a published core calls for, and the approved copy it is about.
+fn publish_core_plan(data: &serde_json::Value) -> Result<(super::CoreUndo, PathBuf)> {
+    let name = json_str(data, "name").context("no core name")?;
+    let approved = approved_core(&name);
+    let current = super::existing_sha(&approved)?;
+    let plan = super::core_undo(
+        current.as_deref(),
+        json_str(data, "old_sha").as_deref(),
+        json_str(data, "new_sha").as_deref(),
+        json_str(data, "backup").is_some(),
+        // Only core upgrades publish to the service here.
+        true,
+    );
+    Ok((plan, approved))
+}
+
+/// Whether something else changed what a step of a core upgrade wrote, so undoing it would mix
+/// that change with this one.
+pub fn foreign(entry: &Entry) -> Result<bool> {
+    let data = &entry.data;
+    Ok(match entry.name.as_str() {
+        "publish_core" => publish_core_plan(data)?.0 == super::CoreUndo::Superseded,
+        "replace_file" => {
+            let target = PathBuf::from(json_str(data, "target").context("no target")?);
+            let current = super::existing_sha(&target)?;
+            current != json_str(data, "old_sha") && current != json_str(data, "new_sha")
+        }
+        _ => false,
+    })
+}
+
+pub fn undo(paths: &Paths, txn: &Txn, entry: &Entry, _done: bool, _writers_started: bool) -> Result<Undo> {
+    let data = &entry.data;
     match entry.name.as_str() {
+        "publish_core" => {
+            let name = json_str(data, "name").context("no core name")?;
+            let (plan, approved) = publish_core_plan(data)?;
+            match plan {
+                super::CoreUndo::Clean => {
+                    super::sync_current(&approved)?;
+                    return Ok(Undo::Clean);
+                }
+                super::CoreUndo::Superseded => return Ok(Undo::Superseded),
+                super::CoreUndo::Remove => {
+                    std::fs::remove_file(&approved)?;
+                    clash_verge_updater::state::sync_parent(&approved)?;
+                    return Ok(Undo::Restored);
+                }
+                super::CoreUndo::Restore => {}
+            }
+            let (Some(old), Some(backup)) = (json_str(data, "old_sha"), json_str(data, "backup")) else {
+                bail!("no backup of {name} to restore");
+            };
+            // Restoring writes as much as publishing did, so it is registered alike.
+            let journal = Journal::open(&paths.txn_dir(&txn.id))?;
+            let tool = json_str(data, "tool").context("no tool")?;
+            let gid = config(paths).service_gid.map(|gid| gid.to_string());
+            let envs: Vec<(&str, &str)> = gid
+                .as_deref()
+                .map(|gid| vec![("CLASH_VERGE_SERVICE_GID", gid)])
+                .unwrap_or_default();
+            let args = ["--install-core", backup.as_str(), "--sha256", old.as_str()];
+            let code = run_writer(&journal, entry.step, &tool, &args, &envs)?;
+            ensure!(code == 0, "restoring {name} to the service failed ({code})");
+            super::sync_published(&approved)?;
+            Ok(Undo::Restored)
+        }
+        "replace_file" => {
+            let target = PathBuf::from(json_str(data, "target").context("no target")?);
+            let current = super::existing_sha(&target)?;
+            let old = json_str(data, "old_sha");
+            if current == old {
+                super::sync_current(&target)?;
+                return Ok(Undo::Clean);
+            }
+            if current != json_str(data, "new_sha") {
+                return Ok(Undo::Superseded);
+            }
+            match json_str(data, "backup") {
+                Some(backup) => put_file(Path::new(&backup), &target, &txn.id)?,
+                // The transaction created the file: there was nothing before it.
+                None => {
+                    std::fs::remove_file(&target)?;
+                    clash_verge_updater::state::sync_parent(&target)?;
+                }
+            }
+            Ok(Undo::Restored)
+        }
         // dpkg may have run even with no writer registered (it starts a moment before), so only
         // the package state tells.
         "dpkg_install" => {
