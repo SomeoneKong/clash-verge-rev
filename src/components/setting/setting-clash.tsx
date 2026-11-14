@@ -1,5 +1,5 @@
 import { LanRounded, SettingsRounded } from '@mui/icons-material'
-import { MenuItem, Select, TextField, Typography } from '@mui/material'
+import { Chip, MenuItem, Select, TextField, Typography } from '@mui/material'
 import { useLockFn } from 'ahooks'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -23,6 +23,8 @@ import { DnsViewer } from './mods/dns-viewer'
 import { HeaderConfiguration } from './mods/external-controller-cors'
 import { GuardState } from './mods/guard-state'
 import { NetworkInterfaceViewer } from './mods/network-interface-viewer'
+import { useNodeLoginAttention } from './mods/node-login'
+import { NodeLoginViewer } from './mods/node-login-viewer'
 import { SettingItem, SettingList } from './mods/setting-comp'
 import { TunnelsViewer } from './mods/tunnels-viewer'
 import { WebUIViewer } from './mods/web-ui-viewer'
@@ -68,6 +70,8 @@ const SettingClash = ({ onError }: Props) => {
   const dnsRef = useRef<DialogRef>(null)
   const corsRef = useRef<DialogRef>(null)
   const tunnelRef = useRef<DialogRef>(null)
+  const nodeLoginRef = useRef<DialogRef>(null)
+  const nodeLoginAttention = useNodeLoginAttention()
 
   const onSwitchFormat = (_e: any, value: boolean) => value
   const onChangeData = (patch: Partial<IConfigData>) => {
@@ -155,6 +159,7 @@ const SettingClash = ({ onError }: Props) => {
       </BaseDialog>
       <HeaderConfiguration ref={corsRef} />
       <TunnelsViewer ref={tunnelRef} />
+      <NodeLoginViewer ref={nodeLoginRef} />
       <SettingItem
         label={t('settings.sections.clash.form.fields.allowLan')}
         extra={
@@ -348,6 +353,21 @@ const SettingClash = ({ onError }: Props) => {
       <SettingItem
         label={t('settings.sections.clash.form.fields.tunnels.title')}
         onClick={() => tunnelRef.current?.open()}
+      />
+
+      <SettingItem
+        label={t('nodeLogin.entry')}
+        extra={
+          nodeLoginAttention > 0 && (
+            <Chip
+              size="small"
+              color="warning"
+              label={nodeLoginAttention}
+              sx={{ ml: 1 }}
+            />
+          )
+        }
+        onClick={() => nodeLoginRef.current?.open()}
       />
     </SettingList>
   )

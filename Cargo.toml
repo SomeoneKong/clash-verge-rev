@@ -10,6 +10,7 @@ members = [
   "crates/clash-verge-limiter",
   "crates/clash-verge-updater",
   "crates/clash-verge-usage",
+  "crates/clash-verge-node-login",
 ]
 resolver = "2"
 
@@ -61,6 +62,7 @@ clash-verge-i18n = { path = "crates/clash-verge-i18n" }
 clash-verge-limiter = { path = "crates/clash-verge-limiter" }
 clash-verge-updater = { path = "crates/clash-verge-updater" }
 clash-verge-usage = { path = "crates/clash-verge-usage" }
+clash-verge-node-login = { path = "crates/clash-verge-node-login" }
 tracing-estuary = { git = "https://github.com/Tunglies/tracing-estuary.git", branch = "main" }
 tauri-plugin-clash-verge-sysinfo = { path = "crates/tauri-plugin-clash-verge-sysinfo" }
 tracing = "0.1.44"

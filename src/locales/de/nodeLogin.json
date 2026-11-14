@@ -1,0 +1,84 @@
+{
+  "entry": "Knoten-Anmeldung",
+  "title": "Knoten-Anmeldung",
+  "currentProfile": "Aktuelles Profil",
+  "officialServer": "Tailscale (offiziell)",
+  "empty": "Keine Knoten müssen angemeldet werden. Derzeit werden tailscale-Knoten unterstützt.",
+  "unsupported": "Der aktuelle Kern unterstützt die Knoten-Anmeldung nicht. Bitte aktualisieren Sie den Kern.",
+  "loadFailed": "Status der Knoten konnte nicht gelesen werden: {{error}}",
+  "states": {
+    "notStarted": "Nicht gestartet",
+    "starting": "Wird gestartet",
+    "needsLogin": "Anmeldung nötig",
+    "needsApproval": "Wartet auf Freigabe",
+    "running": "Angemeldet",
+    "stopped": "Gestoppt",
+    "failed": "Fehlgeschlagen",
+    "unknown": "Unbekannt"
+  },
+  "fields": {
+    "device": "Gerät",
+    "user": "Konto",
+    "addresses": "Adressen",
+    "controlServer": "Steuerserver",
+    "keyExpiry": "Schlüssel läuft ab",
+    "error": "Fehler"
+  },
+  "actions": {
+    "login": "Anmelden…",
+    "logout": "Abmelden"
+  },
+  "settings": {
+    "controlServer": "Steuerserver {{url}}",
+    "ephemeral": "flüchtiger Knoten",
+    "notEphemeral": "kein flüchtiger Knoten",
+    "authKey": "auth-key gesetzt",
+    "noAuthKey": "kein auth-key"
+  },
+  "notes": {
+    "shared": "Teilt die Geräteidentität mit {{name}} des aktuellen Profils",
+    "pendingSettings": "Einstellungen dieses Profils, wirksam nach dem Wechsel: {{settings}}",
+    "controlServerDiffers": "Der Steuerserver ist ein anderer; nach dem Wechsel ist eventuell eine erneute Anmeldung nötig",
+    "conflict": "Mehrere Knoten des aktuellen Profils teilen diese Geräteidentität: {{names}}",
+    "inactive": "Nicht aktiv; wechseln Sie zu diesem Profil, um den Status zu sehen und sich anzumelden",
+    "invalid": "Der Kern erlaubt das state-dir dieses Knotens nicht (nur Pfade unter dem Arbeitsverzeichnis des Kerns und SAFE_PATHS); korrigieren Sie die Konfiguration",
+    "keyExpired": "Der Schlüssel ist abgelaufen: erneut anmelden, um ihn zu verlängern, oder abmelden und mit einem Auth-Key bei einem anderen Konto anmelden",
+    "needsApproval": "Wartet darauf, dass der Administrator des Steuerservers das Gerät freigibt",
+    "failed": "Beheben Sie das Problem und laden Sie die Konfiguration neu (z. B. das aktuelle Profil erneut anwenden)"
+  },
+  "login": {
+    "title": "{{name}} anmelden",
+    "sharedTitle": "{{name}} des aktuellen Profils anmelden (teilt die Geräteidentität mit {{node}} von {{profile}})",
+    "keySection": "Mit Auth-Key anmelden",
+    "keyLabel": "Auth-Key",
+    "keyNote": "Der Auth-Key wird nur für diese Anmeldung verwendet und nicht gespeichert",
+    "showKey": "Auth-Key anzeigen",
+    "hideKey": "Auth-Key verbergen",
+    "submit": "Anmelden",
+    "waiting": "Wartet bis zu {{seconds}} Sekunden",
+    "linkSection": "Im Browser anmelden",
+    "getLink": "Anmeldelink abrufen",
+    "copyLink": "Link kopieren",
+    "openLink": "Im Browser öffnen",
+    "copied": "Link kopiert",
+    "linkNote": "Öffnen Sie den Link im Browser, um die Anmeldung abzuschließen. Bei Headscale ohne OIDC zeigt die Seite einen Befehl, der auf dem Server zur Registrierung auszuführen ist. Danach wird der Knoten hier automatisch als angemeldet angezeigt.",
+    "approval": "Wartet darauf, dass der Administrator des Steuerservers das Gerät freigibt; danach wird es automatisch als angemeldet angezeigt",
+    "success": "{{name}} angemeldet: {{device}} {{addresses}}"
+  },
+  "logout": {
+    "title": "Abmelden",
+    "confirm": "{{name}} abmelden?",
+    "sharedTarget": "Abgemeldet wird {{name}} des aktuellen Profils (teilt die Geräteidentität mit {{node}} von {{profile}})",
+    "effect": "Verbindungen über diesen Knoten schlagen fehl, bis er erneut angemeldet ist",
+    "ephemeral": "Dies ist ein flüchtiger Knoten: Das Gerät wird vom Steuerserver entfernt",
+    "configAuthKey": "Die Konfiguration dieses Knotens setzt einen auth-key, daher meldet er sich beim nächsten Start automatisch wieder an",
+    "success": "{{name}} abgemeldet"
+  },
+  "errors": {
+    "timeout": "Noch kein Ergebnis; prüfen Sie den Status des Knotens später",
+    "changed": "Der Knoten hat sich geändert; bitte erneut versuchen",
+    "loggedIn": "Der Knoten hat eine Geräteidentität; melden Sie ihn ab, bevor Sie sich mit einem Auth-Key anmelden",
+    "rejected": "Anmeldung fehlgeschlagen: {{message}}",
+    "startFailed": "Der Knoten konnte nicht starten: {{message}}"
+  }
+}

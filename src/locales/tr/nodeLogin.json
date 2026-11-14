@@ -1,0 +1,84 @@
+{
+  "entry": "Düğüm Girişi",
+  "title": "Düğüm Girişi",
+  "currentProfile": "Geçerli profil",
+  "officialServer": "Tailscale (resmi)",
+  "empty": "Giriş yapması gereken düğüm yok. Şimdilik tailscale düğümleri destekleniyor.",
+  "unsupported": "Geçerli çekirdek düğüm girişini desteklemiyor. Lütfen çekirdeği yükseltin.",
+  "loadFailed": "Düğüm durumu okunamadı: {{error}}",
+  "states": {
+    "notStarted": "Başlatılmadı",
+    "starting": "Başlatılıyor",
+    "needsLogin": "Giriş gerekli",
+    "needsApproval": "Onay bekleniyor",
+    "running": "Giriş yapıldı",
+    "stopped": "Durduruldu",
+    "failed": "Başarısız",
+    "unknown": "Bilinmiyor"
+  },
+  "fields": {
+    "device": "Cihaz",
+    "user": "Hesap",
+    "addresses": "Adresler",
+    "controlServer": "Kontrol sunucusu",
+    "keyExpiry": "Anahtar bitişi",
+    "error": "Hata"
+  },
+  "actions": {
+    "login": "Giriş yap…",
+    "logout": "Çıkış yap"
+  },
+  "settings": {
+    "controlServer": "kontrol sunucusu {{url}}",
+    "ephemeral": "geçici düğüm",
+    "notEphemeral": "geçici olmayan düğüm",
+    "authKey": "auth-key var",
+    "noAuthKey": "auth-key yok"
+  },
+  "notes": {
+    "shared": "Geçerli profildeki {{name}} ile aynı cihaz kimliğini paylaşıyor",
+    "pendingSettings": "Bu profilin ayarları, geçiş yapınca geçerli olur: {{settings}}",
+    "controlServerDiffers": "Kontrol sunucusu farklı; geçişten sonra yeniden giriş gerekebilir",
+    "conflict": "Geçerli profildeki birden çok düğüm bu cihaz kimliğini paylaşıyor: {{names}}",
+    "inactive": "Etkin değil; durumunu görmek ve giriş yapmak için bu profile geçin",
+    "invalid": "Çekirdek bu düğümün state-dir yoluna izin vermiyor (yalnızca çekirdeğin çalışma dizini ve SAFE_PATHS altındaki yollar); yapılandırmayı düzeltin",
+    "keyExpired": "Anahtarın süresi doldu: yenilemek için yeniden giriş yapın veya çıkış yapıp bir kimlik doğrulama anahtarıyla başka bir hesaba giriş yapın",
+    "needsApproval": "Kontrol sunucusu yöneticisinin cihazı onaylaması bekleniyor",
+    "failed": "Sorunu düzeltip yapılandırmayı yeniden yükleyin (örneğin geçerli profili yeniden uygulayın)"
+  },
+  "login": {
+    "title": "{{name}} için giriş yap",
+    "sharedTitle": "Geçerli profildeki {{name}} için giriş yap ({{profile}} profilindeki {{node}} ile cihaz kimliğini paylaşıyor)",
+    "keySection": "Kimlik doğrulama anahtarıyla giriş",
+    "keyLabel": "Kimlik doğrulama anahtarı",
+    "keyNote": "Anahtar yalnızca bu giriş için kullanılır ve kaydedilmez",
+    "showKey": "Anahtarı göster",
+    "hideKey": "Anahtarı gizle",
+    "submit": "Giriş yap",
+    "waiting": "En fazla {{seconds}} saniye bekleniyor",
+    "linkSection": "Tarayıcıyla giriş",
+    "getLink": "Giriş bağlantısını al",
+    "copyLink": "Bağlantıyı kopyala",
+    "openLink": "Tarayıcıda aç",
+    "copied": "Bağlantı kopyalandı",
+    "linkNote": "Girişi tamamlamak için bağlantıyı bir tarayıcıda açın. OIDC olmayan Headscale ile sayfa, cihazı kaydetmek için sunucuda çalıştırılacak bir komut gösterir. Tamamlandığında düğüm burada otomatik olarak giriş yapılmış görünür.",
+    "approval": "Kontrol sunucusu yöneticisinin cihazı onaylaması bekleniyor; onaylanınca otomatik olarak giriş yapılmış görünür",
+    "success": "{{name}} giriş yaptı: {{device}} {{addresses}}"
+  },
+  "logout": {
+    "title": "Çıkış yap",
+    "confirm": "{{name}} oturumu kapatılsın mı?",
+    "sharedTarget": "Geçerli profildeki {{name}} oturumu kapatılır ({{profile}} profilindeki {{node}} ile cihaz kimliğini paylaşıyor)",
+    "effect": "Bu düğüm üzerinden bağlantılar, yeniden giriş yapılana kadar başarısız olur",
+    "ephemeral": "Bu geçici bir düğüm: cihaz kontrol sunucusundan silinecek",
+    "configAuthKey": "Bu düğümün yapılandırmasında auth-key var; bir sonraki başlatmada otomatik olarak yeniden giriş yapar",
+    "success": "{{name}} oturumu kapatıldı"
+  },
+  "errors": {
+    "timeout": "Henüz sonuç yok; düğümün durumunu daha sonra kontrol edin",
+    "changed": "Düğüm değişti; lütfen yeniden deneyin",
+    "loggedIn": "Düğümün bir cihaz kimliği var; kimlik doğrulama anahtarıyla giriş yapmadan önce çıkış yapın",
+    "rejected": "Giriş başarısız: {{message}}",
+    "startFailed": "Düğüm başlatılamadı: {{message}}"
+  }
+}
