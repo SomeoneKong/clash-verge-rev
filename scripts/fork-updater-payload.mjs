@@ -107,6 +107,14 @@ function prepare() {
 
 const sidecar = (name) =>
   path.join(tauriDir, 'sidecar', `${name}-${target}${exe}`)
+// Bundling signs the macOS sidecars again, so the cores the service gets are the bundle's: the
+// update component tells the service's copies and the bundle's apart by their digests.
+const appBinaries = path.join(
+  release,
+  'bundle/macos/Clash Verge.app/Contents/MacOS',
+)
+const coreFile = (name) =>
+  macos ? path.join(appBinaries, name) : sidecar(name)
 // Linux bundles the service as a sidecar; Windows and macOS keep it in the resources.
 const serviceBinary = () =>
   windows || macos
@@ -123,8 +131,8 @@ function coreVersion(file) {
 function cores() {
   return ['verge-mihomo', 'verge-mihomo-alpha'].map((name) => ({
     name,
-    version: coreVersion(sidecar(name)),
-    sha256: fileSha(sidecar(name)),
+    version: coreVersion(coreFile(name)),
+    sha256: fileSha(coreFile(name)),
   }))
 }
 
@@ -256,10 +264,14 @@ function payloads() {
       'bundle',
       [
         { name: 'Clash.Verge.app.tar.gz', source: app, role: 'bundle' },
-        { name: 'verge-mihomo', source: sidecar('verge-mihomo'), role: 'core' },
+        {
+          name: 'verge-mihomo',
+          source: coreFile('verge-mihomo'),
+          role: 'core',
+        },
         {
           name: 'verge-mihomo-alpha',
-          source: sidecar('verge-mihomo-alpha'),
+          source: coreFile('verge-mihomo-alpha'),
           role: 'core',
         },
         {

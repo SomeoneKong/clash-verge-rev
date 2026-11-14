@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, bail};
 use clash_verge_updater::audit::{self, AuditLog, Record, Source, Stream};
 use clash_verge_updater::paths::Paths;
 use clash_verge_updater::protocol::{PROTOCOL, Request, Response};
-use clash_verge_updater::state::{Outcome, Phase, State};
+use clash_verge_updater::state::{Decision, Outcome, Phase, State};
 use std::io::Write as _;
 use std::time::Duration;
 
@@ -106,14 +106,20 @@ pub fn recover() -> Result<()> {
     let recovered = (|| -> Result<()> {
         let audit = AuditLog::open(&paths.logs_dir())?;
         let mut state = State::load(&paths.state_file())?;
+        // A published core upgrade still waits for its GUI; the component settles it once it runs.
         if let Some(txn) = state.txn.clone()
             && txn.phase != Phase::UserPhasePending
             && txn.phase != Phase::UserPhaseBegun
+            && !(txn.phase == Phase::Published && txn.decision.is_none())
         {
             if let Some(current) = state.txn.as_mut()
                 && current.phase == Phase::RecoveryBlocked
             {
-                current.phase = Phase::Applying;
+                current.phase = if current.decision == Some(Decision::Revert) {
+                    Phase::Reverting
+                } else {
+                    Phase::Applying
+                };
             }
             match txn::recover(&paths, &audit, &mut state, Duration::from_secs(60))? {
                 Some(finished) => println!("transaction {}: {:?}", finished.id, finished.outcome),

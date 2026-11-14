@@ -19,6 +19,18 @@ pub enum Phase {
     UserPhaseBegun,
     /// The writers of an interrupted transaction could not be confirmed stopped.
     RecoveryBlocked,
+    /// A core upgrade is published; the GUI is to tell whether the new core runs.
+    Published,
+    /// A core upgrade is being undone, as decided.
+    Reverting,
+}
+
+/// What becomes of a published core upgrade. Once on disk it is final.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Decision {
+    Keep,
+    Revert,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +87,11 @@ pub struct Txn {
     pub external_mark: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker: Option<ProcessRef>,
+    /// A published core upgrade is kept when the GUI has not answered by then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<Decision>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +116,13 @@ pub struct State {
     pub txn: Option<Txn>,
     pub needs_repair: Option<Finished>,
     pub last: Option<Finished>,
+    /// No core payload below this version is accepted; the same version is, to retry or repair.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core_floor: Option<String>,
+    /// A core upgrade left needing repair, kept apart from the app's: another core upgrade
+    /// repairs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core_needs_repair: Option<Finished>,
 }
 
 impl State {
