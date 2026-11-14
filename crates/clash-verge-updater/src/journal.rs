@@ -7,6 +7,7 @@ use clash_verge_updater::state::ProcessRef;
 use serde::{Deserialize, Serialize};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -141,12 +142,44 @@ pub fn started_steps(entries: &[Entry]) -> Vec<(Entry, bool)> {
     steps
 }
 
-/// The worker, which registers itself first under its own step.
-pub fn worker(entries: &[Entry]) -> Option<ProcessRef> {
+/// The workers in the order they started; each registers itself first under its own step. A core
+/// upgrade decided to be undone starts a second one.
+pub fn workers(entries: &[Entry]) -> Vec<ProcessRef> {
     entries
         .iter()
-        .find(|entry| entry.mark == Mark::Writer && entry.step == u32::MAX)
-        .and_then(|entry| serde_json::from_value(entry.data.clone()).ok())
+        .filter(|entry| entry.mark == Mark::Writer && entry.step == u32::MAX)
+        .filter_map(|entry| serde_json::from_value(entry.data.clone()).ok())
+        .collect()
+}
+
+/// The worker started last: the one the transaction now waits on.
+pub fn worker(entries: &[Entry]) -> Option<ProcessRef> {
+    workers(entries).pop()
+}
+
+/// How many workers of the transaction in `dir` have registered so far.
+#[cfg_attr(windows, allow(dead_code))]
+pub fn worker_count(dir: &Path) -> usize {
+    read(dir).map_or(0, |entries| workers(&entries).len())
+}
+
+/// Waits for a worker started after `before` workers had registered to register itself, and
+/// returns it. Windows knows its worker from starting it.
+#[cfg_attr(windows, allow(dead_code))]
+pub fn await_worker(dir: &Path, before: usize, timeout: Duration) -> Result<ProcessRef> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Ok(entries) = read(dir) {
+            let workers = workers(&entries);
+            if workers.len() > before
+                && let Some(worker) = workers.last()
+            {
+                return Ok(*worker);
+            }
+        }
+        anyhow::ensure!(Instant::now() < deadline, "the worker did not start");
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }
 
 pub fn writers(entries: &[Entry]) -> Vec<ProcessRef> {

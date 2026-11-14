@@ -10,6 +10,8 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
 pub const PROTOCOL: u32 = 1;
 pub const MAX_FRAME: u32 = 64 * 1024;
+/// Listed in `Hello::capabilities` by a component that upgrades cores on their own.
+pub const CAPABILITY_CORE: &str = "core";
 
 /// Where a request came from, as the client states it. Who sent it is taken from the kernel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +57,11 @@ pub enum Request {
     Status {
         txn: String,
     },
+    /// Whether the core a published core upgrade put in place runs, as the GUI found.
+    Confirm {
+        txn: String,
+        ok: bool,
+    },
     Cancel {
         txn: String,
     },
@@ -81,6 +88,24 @@ pub struct Hello {
     pub fingerprint: Option<String>,
     pub current: Option<Txn>,
     pub needs_repair: Option<Finished>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub service_installed: bool,
+    #[serde(default)]
+    pub core_floor: Option<String>,
+    #[serde(default)]
+    pub core_needs_repair: Option<Finished>,
+    /// The service's approved cores as they are on disk.
+    #[serde(default)]
+    pub approved_cores: Vec<ApprovedCore>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovedCore {
+    pub name: String,
+    /// `None` when there is no such file.
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

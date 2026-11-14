@@ -14,6 +14,8 @@ pub struct IRuntime {
     pub exists_keys: HashSet<String>,
     // TODO 或许可以用 FixMap 来存储以提升效率
     pub chain_logs: HashMap<String, Vec<(String, String)>>,
+    /// The minimal config put in place after the full one failed, not one built from the profiles.
+    pub(crate) fallback: bool,
 }
 
 impl IRuntime {

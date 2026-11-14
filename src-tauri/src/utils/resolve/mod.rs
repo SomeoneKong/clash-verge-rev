@@ -82,6 +82,7 @@ async fn resolve_setup() {
     crate::core::proxy_usage::start();
     let core_init = AsyncHandler::spawn(|| async {
         init_core_manager().await;
+        feat::confirm_core_upgrade_after_startup().await;
     });
 
     let _ = futures::join!(

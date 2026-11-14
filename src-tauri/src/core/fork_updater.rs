@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use clash_verge_logging::{Type, logging};
 use clash_verge_updater::client::{self, Connection};
 use clash_verge_updater::manifest::{Kind, Platform};
-use clash_verge_updater::protocol::{Hello, PROTOCOL, Request, Response, Trigger, TxnView};
+use clash_verge_updater::protocol::{Hello, PROTOCOL, Request, Response, Staged, Trigger, TxnView};
 use clash_verge_updater::state::{Finished, Outcome as TxnOutcome};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
@@ -49,6 +49,12 @@ pub(crate) fn take_gate() -> Result<MutexGuard<'static, ()>> {
         .map_err(|_| anyhow!("an app update, core upgrade or service change is in progress"))
 }
 
+/// Waited for by the confirmation of a core upgrade a previous app left, which must not overlap
+/// an app update either.
+pub(crate) async fn wait_gate() -> MutexGuard<'static, ()> {
+    GATE.lock().await
+}
+
 /// Held by core upgrades and service changes for their whole run: refused while an app update
 /// runs, here or in the component.
 pub fn exclusive() -> Result<MutexGuard<'static, ()>> {
@@ -82,14 +88,116 @@ pub async fn available() -> bool {
     status().await.is_some()
 }
 
+/// What the component reports, for core upgrades; `None` where it cannot be reached.
+pub(crate) async fn component_status() -> Option<Hello> {
+    status().await
+}
+
+/// The component refused a core upgrade before it changed anything, so another way may take it.
+#[derive(Debug)]
+pub(crate) struct Refused(pub String);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the update component refused the core upgrade: {}", self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// Hands a core payload over; the component verifies it before it answers.
+pub(crate) async fn stage_core(payload: &[u8], signatures: Vec<String>) -> Result<Staged> {
+    let mut connection = Connection::connect().await?;
+    let trigger = Trigger {
+        kind: "core".into(),
+        client_version: env!("CARGO_PKG_VERSION").into(),
+    };
+    match connection.stage(trigger, payload, signatures).await? {
+        Response::Staged(staged) => Ok(staged),
+        Response::Rejected { reason } => Err(Refused(reason).into()),
+        Response::Busy { .. } => bail!("an update is already in progress"),
+        other => bail!("unexpected answer {other:?}"),
+    }
+}
+
+/// Starts a staged core upgrade. An answer lost on the way is looked up; a refusal means nothing
+/// was started.
+pub(crate) async fn apply_core(txn: &str) -> Result<TxnView> {
+    let answer = match Connection::connect().await {
+        Ok(mut connection) => {
+            connection
+                .request(&Request::Apply {
+                    txn: txn.into(),
+                    relaunch: false,
+                })
+                .await
+        }
+        Err(error) => Err(error),
+    };
+    match answer {
+        Ok(Response::Txn(view)) => Ok(view),
+        Ok(Response::Rejected { reason }) => Err(Refused(reason).into()),
+        Ok(Response::Error { message }) => bail!("{message}"),
+        Ok(Response::Busy { .. }) => bail!("an update is already in progress"),
+        Ok(other) => bail!("unexpected answer {other:?}"),
+        Err(error) => applied_anyway(txn).await.ok_or(error),
+    }
+}
+
+/// How a core upgrade stands, or `None` where the component cannot be reached.
+pub(crate) async fn core_view(txn: &str) -> Option<TxnView> {
+    view(txn).await
+}
+
+/// Follows a core upgrade until `reached` accepts how it stands, reconnecting meanwhile.
+pub(crate) async fn wait_core(txn: &str, reached: impl Fn(&TxnView) -> bool) -> Result<TxnView> {
+    let deadline = Instant::now() + Duration::from_secs(20 * 60);
+    loop {
+        match view(txn).await {
+            Some(TxnView::Unknown) => bail!("the update component lost track of the core upgrade"),
+            Some(view) if reached(&view) => return Ok(view),
+            _ => {}
+        }
+        anyhow::ensure!(Instant::now() < deadline, "the core upgrade did not finish in time");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// Tells the component whether the core a core upgrade put in place runs. The first answer
+/// decides; one lost on the way is sent again, and is then answered with how the upgrade stands.
+pub(crate) async fn confirm_core(txn: &str, ok: bool) -> Result<TxnView> {
+    let request = Request::Confirm { txn: txn.into(), ok };
+    let mut last = None;
+    for _ in 0..10 {
+        let answer = match Connection::connect().await {
+            Ok(mut connection) => connection.request(&request).await,
+            Err(error) => Err(error),
+        };
+        match answer {
+            Ok(Response::Txn(view)) => return Ok(view),
+            Ok(Response::Rejected { reason } | Response::Error { message: reason }) => bail!("{reason}"),
+            Ok(other) => bail!("unexpected answer {other:?}"),
+            Err(error) => last = Some(error),
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    Err(last.unwrap_or_else(|| anyhow!("the update component did not answer")))
+}
+
 /// Runs first at startup, before the core is touched. While the component applies an update the
 /// app does not start; after an installer the component starts it. A version left needing repair
 /// is repaired once, without asking: the user chose that update already.
 pub async fn resolve_at_startup() {
+    // A core upgrade still changing files is waited for, and one left to this app to confirm is
+    // confirmed once the core runs.
+    crate::feat::settle_core_upgrade_at_startup().await;
     let Some(status) = status().await else {
         return;
     };
     if let Some(txn) = &status.current {
+        if txn.kind == Kind::Core {
+            return;
+        }
         // The bundle phase of this user's update interrupted here is finished or given up first;
         // the app starts once that update has ended.
         #[cfg(target_os = "macos")]
