@@ -30,6 +30,9 @@ const PACKAGE_TIMEOUT_SECS: u64 = 300;
 /// Well above any real core package, low enough that a wrong response cannot exhaust memory.
 const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
 
+mod component;
+pub use component::{confirm_core_upgrade_after_startup, settle_core_upgrade_at_startup};
+
 static STAGING_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// `.rollback` and `.old` are fixed paths, so two upgrades must not overlap.
 static UPGRADE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -41,11 +44,15 @@ pub struct CoreUpgradeReport {
 }
 
 pub async fn upgrade_core(force: bool) -> Result<CoreUpgradeReport> {
-    let _update_gate = crate::core::fork_updater::exclusive()?;
+    let mut update_gate = Some(crate::core::fork_updater::exclusive()?);
     let _serialized = UPGRADE_LOCK.lock().await;
     let core = Config::verge().await.latest_arc().get_valid_clash_core();
     tracing::Span::current().record("core", tracing::field::display(&core));
     let alpha = core.ends_with("-alpha");
+    // The update component publishes the cores without asking for elevation where it can.
+    if let Some(upgraded) = component::try_upgrade(&mut update_gate, alpha, force).await {
+        return upgraded;
+    }
     let target = managed_core_path(&core)?;
 
     // A core already broken by the in-place updater cannot report a version; upgrading is the repair.

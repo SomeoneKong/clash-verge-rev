@@ -1,5 +1,6 @@
 //! The resident service: answers the GUI, verifies payloads, starts a worker per transaction and
-//! finishes the transaction when the worker is gone.
+//! finishes the transaction when the worker is gone. A core upgrade waits in between for the GUI
+//! to say whether the new core runs.
 
 use crate::txn::{self, WorkerResult};
 use crate::{logger, platform};
@@ -7,13 +8,14 @@ use anyhow::{Context as _, Result};
 use clash_verge_updater::audit::{self, AuditLog, Record, Source, Stream};
 use clash_verge_updater::manifest::{Kind, Platform};
 use clash_verge_updater::paths::Paths;
-use clash_verge_updater::payload::{MAX_PAYLOAD, Payload};
+use clash_verge_updater::payload::{MAX_PAYLOAD, Payload, sha256_file};
 use clash_verge_updater::protocol::{
-    Hello, MAX_FRAME, PROTOCOL, Request, Response, Staged as StagedView, Trigger, TxnView, UserPhaseEvent, read_frame,
-    write_frame,
+    ApprovedCore, CAPABILITY_CORE, Hello, MAX_FRAME, PROTOCOL, Request, Response, Staged as StagedView, Trigger,
+    TxnView, UserPhaseEvent, read_frame, write_frame,
 };
-use clash_verge_updater::state::{Initiator, Outcome, Phase, State, Txn};
+use clash_verge_updater::state::{Decision, Initiator, Outcome, Phase, State, Txn};
 use clash_verge_updater::sys;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -40,7 +42,11 @@ pub struct Daemon {
     connections: tokio::sync::Semaphore,
     /// Transactions with a supervisor running: two would recover the same one side by side.
     supervised: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// The digests of the approved cores, by name, with the size and time they were read at.
+    approved: std::sync::Mutex<HashMap<String, (FileStamp, String)>>,
 }
+
+type FileStamp = (u64, Option<std::time::SystemTime>);
 
 /// Marks a transaction supervised for as long as its supervisor runs.
 struct Supervising(Arc<Daemon>, String);
@@ -114,6 +120,7 @@ impl Daemon {
             receiving: AtomicBool::new(false),
             connections: tokio::sync::Semaphore::new(MAX_CONNECTIONS),
             supervised: std::sync::Mutex::default(),
+            approved: std::sync::Mutex::default(),
         }))
     }
 
@@ -127,7 +134,12 @@ impl Daemon {
             .state
             .txn
             .as_ref()
-            .filter(|txn| matches!(txn.phase, Phase::Applying | Phase::RecoveryBlocked))
+            .filter(|txn| {
+                matches!(
+                    txn.phase,
+                    Phase::Applying | Phase::RecoveryBlocked | Phase::Published | Phase::Reverting
+                )
+            })
             .map(|txn| txn.id.clone());
         if let Some(id) = pending {
             self.supervise(id);
@@ -178,6 +190,7 @@ impl Daemon {
             Request::Hello { .. } => self.hello().await,
             Request::Apply { txn, relaunch } => self.apply(&txn, relaunch, peer).await,
             Request::Status { txn } => Ok(Response::Txn(self.view(&txn).await)),
+            Request::Confirm { txn, ok } => self.confirm(&txn, ok, peer).await,
             Request::Cancel { txn } => self.cancel(&txn, peer).await,
             Request::Abandon { txn } => self.abandon(&txn, peer).await,
             Request::Repair { txn, relaunch } => self.repair(txn.as_deref(), relaunch, peer).await,
@@ -225,6 +238,7 @@ impl Daemon {
             expire_user_phase(&self.paths, &self.audit, &mut inner.state)?;
             txn::observe(&self.paths, &self.audit, &mut inner.state)
         })?;
+        let approved_cores = tokio::task::block_in_place(|| self.approved_cores());
         Ok(Response::Hello(Box::new(Hello {
             protocol: PROTOCOL,
             updater_version: env!("CARGO_PKG_VERSION").into(),
@@ -234,7 +248,34 @@ impl Daemon {
             fingerprint: platform::installed_fingerprint(),
             current: inner.state.txn.clone(),
             needs_repair: inner.state.needs_repair.clone(),
+            capabilities: vec![CAPABILITY_CORE.into()],
+            service_installed: platform::service_installed(),
+            core_floor: inner.state.core_floor.clone(),
+            core_needs_repair: inner.state.core_needs_repair.clone(),
+            approved_cores,
         })))
+    }
+
+    /// The digests of the approved cores, read again only once a file's size or time changed.
+    fn approved_cores(&self) -> Vec<ApprovedCore> {
+        let mut cache = self.approved.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        platform::approved_cores()
+            .into_iter()
+            .map(|(name, path)| {
+                let sha256 = std::fs::metadata(&path).ok().and_then(|meta| {
+                    let stamp = (meta.len(), meta.modified().ok());
+                    if let Some((cached, digest)) = cache.get(&name)
+                        && *cached == stamp
+                    {
+                        return Some(digest.clone());
+                    }
+                    let digest = sha256_file(&path).ok()?;
+                    cache.insert(name.clone(), (stamp, digest.clone()));
+                    Some(digest)
+                });
+                ApprovedCore { name, sha256 }
+            })
+            .collect()
     }
 
     async fn view(&self, id: &str) -> TxnView {
@@ -246,11 +287,15 @@ impl Daemon {
         if let Some(txn) = inner.state.txn.as_ref().filter(|txn| txn.id == id) {
             return TxnView::Running(txn.clone());
         }
-        [inner.state.last.as_ref(), inner.state.needs_repair.as_ref()]
-            .into_iter()
-            .flatten()
-            .find(|finished| finished.id == id)
-            .map_or(TxnView::Unknown, |finished| TxnView::Finished(finished.clone()))
+        [
+            inner.state.last.as_ref(),
+            inner.state.needs_repair.as_ref(),
+            inner.state.core_needs_repair.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|finished| finished.id == id)
+        .map_or(TxnView::Unknown, |finished| TxnView::Finished(finished.clone()))
     }
 
     fn reject(&self, peer: &Initiator, reason: String) -> Response {
@@ -384,8 +429,14 @@ impl Daemon {
         };
         // A refusal here changes nothing, so the app may still install the update on its own.
         let ready = tokio::task::block_in_place(|| {
-            txn::admit(&inner.state, &staged.payload.manifest, staged.repair)
-                .and_then(|()| platform::check_ready(&staged.payload.manifest))
+            let manifest = &staged.payload.manifest;
+            txn::admit(&inner.state, manifest, staged.repair).and_then(|()| {
+                if manifest.kind == Kind::Core {
+                    platform::check_ready_core(&self.paths, &inner.state)
+                } else {
+                    platform::check_ready(manifest)
+                }
+            })
         });
         if let Err(error) = ready {
             return Ok(self.reject(peer, format!("{error:#}")));
@@ -405,14 +456,19 @@ impl Daemon {
     /// fails before the worker starts; a worker that did not start ends the transaction as failed.
     fn begin(&self, state: &mut State, staged: &Staged, relaunch: bool) -> Result<Txn> {
         let manifest = &staged.payload.manifest;
-        txn::save_payload(&self.paths, &staged.payload, &staged.signatures)?;
+        txn::save_payload(&self.paths, &staged.txn, &staged.payload, &staged.signatures)?;
         let txn_dir = self.paths.txn_dir(&staged.txn);
         std::fs::create_dir_all(&txn_dir).with_context(|| format!("failed to create {}", txn_dir.display()))?;
         clash_verge_updater::state::sync_parent(&txn_dir)?;
         let txn = Txn {
             id: staged.txn.clone(),
             version: manifest.version.clone(),
-            from_version: platform::installed_version(),
+            // The version of the cores in place is not something the component knows.
+            from_version: if manifest.kind == Kind::Core {
+                None
+            } else {
+                platform::installed_version()
+            },
             kind: manifest.kind,
             phase: if manifest.kind == Kind::Bundle {
                 Phase::UserPhasePending
@@ -429,6 +485,8 @@ impl Daemon {
             repair: staged.repair,
             external_mark: txn::external_mark(&self.paths),
             worker: None,
+            confirm_by: None,
+            decision: None,
         };
         state.txn = Some(txn.clone());
         if let Err(error) = state.save(&self.paths.state_file()) {
@@ -460,7 +518,7 @@ impl Daemon {
     }
 
     /// Waits for the transaction's writers to stop, then finishes it and restarts the GUI if the
-    /// GUI left for the installer.
+    /// GUI left for the installer. A published core upgrade is watched on until it is settled.
     pub fn supervise(self: &Arc<Self>, id: String) {
         let fresh = self
             .supervised
@@ -477,13 +535,19 @@ impl Daemon {
             loop {
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 let state = me.inner.lock().await.state.clone();
-                let Some(txn) = state
-                    .txn
-                    .clone()
-                    .filter(|txn| txn.id == id && matches!(txn.phase, Phase::Applying | Phase::RecoveryBlocked))
-                else {
+                let Some(txn) = state.txn.clone().filter(|txn| {
+                    txn.id == id
+                        && matches!(
+                            txn.phase,
+                            Phase::Applying | Phase::RecoveryBlocked | Phase::Published | Phase::Reverting
+                        )
+                }) else {
                     return;
                 };
+                if txn.phase == Phase::Published {
+                    me.settle_if_due(&txn).await;
+                    continue;
+                }
                 // A worker the service did not get to note down is found in the journal.
                 let worker = txn.worker.or_else(|| {
                     crate::journal::read(&me.paths.txn_dir(&id))
@@ -548,6 +612,84 @@ impl Daemon {
                 }
             }
         });
+    }
+
+    /// Keeps a published core upgrade the GUI did not answer for in time, and ends one decided to be
+    /// kept whose end did not reach the disk.
+    async fn settle_if_due(&self, txn: &Txn) {
+        let due = txn.decision.is_some()
+            || txn
+                .confirm_by
+                .as_deref()
+                .and_then(|by| chrono::DateTime::parse_from_rfc3339(by).ok())
+                .is_none_or(|by| chrono::Local::now().fixed_offset() >= by);
+        if !due {
+            return;
+        }
+        let mut inner = self.inner.lock().await;
+        let settled = tokio::task::block_in_place(|| -> Result<()> {
+            // The answer may have come meanwhile.
+            let Some(current) = inner
+                .state
+                .txn
+                .clone()
+                .filter(|current| current.id == txn.id && current.phase == Phase::Published)
+            else {
+                return Ok(());
+            };
+            if current.decision.is_none() {
+                txn::decide(&self.paths, &self.audit, &mut inner.state, None)?;
+            }
+            txn::keep(&self.paths, &self.audit, &mut inner.state).map(drop)
+        });
+        drop(inner);
+        if let Err(error) = settled {
+            logger::log(&format!("transaction {}: {error:#}", txn.id));
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+    }
+
+    /// The GUI tells whether the core a published upgrade put in place runs. The first answer
+    /// decides; one that comes again or late gets how the upgrade stands.
+    async fn confirm(self: &Arc<Self>, id: &str, ok: bool, peer: &Initiator) -> Result<Response> {
+        let mut inner = self.inner.lock().await;
+        let Some(txn) = inner.state.txn.clone().filter(|txn| txn.id == id) else {
+            drop(inner);
+            return Ok(Response::Txn(self.view(id).await));
+        };
+        if txn.initiator.id != peer.id {
+            return Ok(self.reject(peer, "only the user who started the upgrade confirms it".into()));
+        }
+        if txn.phase != Phase::Published || txn.decision.is_some() {
+            return Ok(Response::Txn(TxnView::Running(txn)));
+        }
+        let decision =
+            tokio::task::block_in_place(|| txn::decide(&self.paths, &self.audit, &mut inner.state, Some(ok)))?;
+        if decision == Decision::Keep {
+            // An end that did not reach the disk is retried by the supervisor.
+            let finished = tokio::task::block_in_place(|| txn::keep(&self.paths, &self.audit, &mut inner.state));
+            return Ok(Response::Txn(match finished {
+                Ok(finished) => TxnView::Finished(finished),
+                Err(error) => {
+                    logger::log(&format!("transaction {id}: {error:#}"));
+                    inner.state.txn.clone().map_or(TxnView::Unknown, TxnView::Running)
+                }
+            }));
+        }
+        // The decision is on disk; the supervisor sees the worker that undoes the upgrade once the
+        // state is released, by which time it is registered.
+        let worker = tokio::task::block_in_place(|| platform::spawn_worker(&self.paths, id));
+        if let (Ok(worker), Some(current)) = (&worker, inner.state.txn.as_mut()) {
+            current.worker = Some(*worker);
+            if let Err(error) = inner.state.save(&self.paths.state_file()) {
+                logger::log(&format!("transaction {id}: {error:#}"));
+            }
+        }
+        let view = inner.state.txn.clone().map_or(TxnView::Unknown, TxnView::Running);
+        drop(inner);
+        self.supervise(id.to_owned());
+        worker.context("the worker undoing the upgrade did not confirm its start")?;
+        Ok(Response::Txn(view))
     }
 
     fn relaunch(&self, txn: &Txn) {
@@ -775,11 +917,7 @@ pub const ABANDONED: &str = "given up by an administrator; the user phase result
 
 /// Ends a user phase that changed nothing as root with `outcome`.
 pub fn end_user_phase(paths: &Paths, audit: &AuditLog, state: &mut State, outcome: Outcome, why: &str) -> Result<()> {
-    let result = WorkerResult {
-        outcome,
-        error: Some(why.into()),
-        components: Default::default(),
-    };
+    let result = WorkerResult::new(outcome, Some(why.into()));
     txn::finish(paths, audit, state, result).map(drop)
 }
 

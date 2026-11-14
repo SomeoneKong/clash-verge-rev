@@ -46,6 +46,18 @@ enum ConfigApplication {
 
 pub(crate) struct ConfigUpdateGuard<'a>(&'a CoreManager);
 
+/// The runtime in use is the minimal one put in place after the full one failed. It is told with
+/// the runtime itself, so it is committed or dropped with it.
+pub(crate) async fn runtime_is_fallback() -> bool {
+    Config::runtime().await.data_arc().fallback
+}
+
+/// The configuration owned for a while: its writes and its updates, taken in the repo's order.
+pub(crate) struct ConfigOwnership {
+    pub(crate) update: ConfigUpdateGuard<'static>,
+    _write: tokio::sync::MutexGuard<'static, ()>,
+}
+
 impl Drop for ConfigUpdateGuard<'_> {
     fn drop(&mut self) {
         self.0.finish_config_update();
@@ -141,6 +153,93 @@ impl CoreManager {
         Ok(ConfigUpdateGuard(self))
     }
 
+    /// Waits for a running configuration update to end and takes over the configuration: nothing
+    /// else writes it, applies it or starts the core until the ownership is dropped. The write
+    /// lock is let go while waiting, so the two never wait on each other.
+    pub(crate) async fn own_config_waiting(&'static self, limit: Duration) -> Result<ConfigOwnership> {
+        let deadline = Instant::now() + limit;
+        loop {
+            let write = Config::lock_config_write().await;
+            if self.try_start_config_update() {
+                return Ok(ConfigOwnership {
+                    update: ConfigUpdateGuard(self),
+                    _write: write,
+                });
+            }
+            drop(write);
+            anyhow::ensure!(Instant::now() < deadline, "a configuration update did not end in time");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    /// Starts the core anew, through `restart`, with a runtime the core beside the app accepts: the
+    /// full one built from the profiles again, else the minimal fallback. Nothing is handed to the
+    /// running core. The runtime is committed only once a core has started with it; a restart that
+    /// failed before it stopped the previous core leaves that core's runtime, on disk as well.
+    /// Returns whether a core started, with how the restart went.
+    pub(crate) async fn restart_with_checked_runtime<Restart, Restarted>(
+        &self,
+        _update: &ConfigUpdateGuard<'_>,
+        restart: Restart,
+    ) -> (bool, Result<()>)
+    where
+        Restart: FnOnce() -> Restarted,
+        Restarted: std::future::Future<Output = Result<()>>,
+    {
+        let runtime = Config::runtime().await;
+        let transaction = match DraftTransaction::begin(vec![&runtime]) {
+            Ok(transaction) => transaction,
+            Err(busy) => return (false, Err(busy.into())),
+        };
+        if let Err(error) = self.stage_checked_runtime().await {
+            return (false, Err(error));
+        }
+        let before = self.current_core_readiness_generation();
+        let restarted = restart().await;
+        let started = self
+            .current_core_readiness_generation()
+            .is_some_and(|now| Some(now) != before);
+        if started {
+            transaction.commit();
+        } else {
+            drop(transaction);
+            if let Err(error) = Config::generate_file().await {
+                logging!(warn, Type::Config, "Restoring the runtime file failed: {error:#}");
+            }
+        }
+        (started, restarted)
+    }
+
+    /// Stages the full runtime the core beside the app accepts, else the minimal fallback.
+    async fn stage_checked_runtime(&self) -> Result<()> {
+        let checked = async {
+            Config::generate().await?;
+            let yaml = Config::runtime_config_yaml().await?;
+            let outcome = CoreConfigValidator::global()
+                .validate_config_outcome_with(&yaml)
+                .await?;
+            anyhow::ensure!(outcome.is_valid(), "{outcome}");
+            Ok(yaml)
+        }
+        .await;
+        match checked {
+            Ok(yaml) => {
+                Config::write_runtime_file(&yaml).await?;
+            }
+            Err(error) => {
+                let message = format!("{error:#}");
+                logging!(
+                    warn,
+                    Type::Config,
+                    "The full runtime is refused, using the minimal one: {message}"
+                );
+                self.use_default_config(NoticeStatus::ConfigValidateBootError, &message)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn update_config_in_patch(&self, _update: &ConfigUpdateGuard<'_>) -> Result<()> {
         if handle::Handle::global().is_exiting() {
             anyhow::bail!("application is exiting");
@@ -163,6 +262,7 @@ impl CoreManager {
 
         Config::runtime().await.edit_draft(|d| {
             *d = IRuntime {
+                fallback: true,
                 config: Some(clash_config.to_owned()),
                 dns_override: None,
                 exists_keys: HashSet::new(),

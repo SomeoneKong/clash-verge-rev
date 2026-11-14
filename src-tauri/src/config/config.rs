@@ -245,6 +245,7 @@ impl Config {
 
         Self::runtime().await.edit_draft(|d| {
             *d = IRuntime {
+                fallback: false,
                 config: Some(config),
                 dns_override: Some(dns_override),
                 exists_keys,

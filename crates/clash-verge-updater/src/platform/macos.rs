@@ -11,7 +11,7 @@ use clash_verge_updater::audit::{AuditLog, Components, CoreChange, Record, Sourc
 use clash_verge_updater::manifest::{Kind, Manifest, Role};
 use clash_verge_updater::paths::{LAUNCHD_LABEL, Paths};
 use clash_verge_updater::payload::Payload;
-use clash_verge_updater::state::{Initiator, ProcessRef, Txn, copy_synced, sync_parent, write_atomic};
+use clash_verge_updater::state::{Initiator, ProcessRef, State, Txn, copy_synced, sync_parent, write_atomic};
 use clash_verge_updater::sys;
 use serde_json::json;
 use std::ffi::OsString;
@@ -60,6 +60,32 @@ pub const fn check_ready(_manifest: &Manifest) -> Result<()> {
     Ok(())
 }
 
+/// A core upgrade publishes to the service with the tool of the app payload kept from the last
+/// app update; the bundle's cores are the user's, so without the service there is nothing to do.
+pub fn check_ready_core(paths: &Paths, state: &State) -> Result<()> {
+    ensure!(service_present(), "the service is not installed");
+    let floor = state
+        .floor
+        .as_deref()
+        .context("no app update went through the component, so no service tool was kept")?;
+    ensure!(
+        paths.payloads_dir().join(floor).join("payload.zip").is_file(),
+        "the payload of v{floor} was not kept"
+    );
+    Ok(())
+}
+
+pub fn service_installed() -> bool {
+    service_present()
+}
+
+pub fn approved_cores() -> Vec<(String, PathBuf)> {
+    ["verge-mihomo", "verge-mihomo-alpha"]
+        .into_iter()
+        .map(|name| (name.to_owned(), approved_core(name)))
+        .collect()
+}
+
 /// `path` with `suffix` appended to its file name.
 fn sibling(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
@@ -74,6 +100,7 @@ pub fn spawn_worker(paths: &Paths, id: &str) -> Result<ProcessRef> {
     let copy = bin.join("clash-verge-updater");
     copy_synced(&std::env::current_exe()?, &copy)?;
     std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755))?;
+    let before = crate::journal::worker_count(&paths.txn_dir(id));
     let mut command = Command::new(&copy);
     command
         .args(["--worker", id])
@@ -91,16 +118,7 @@ pub fn spawn_worker(paths: &Paths, id: &str) -> Result<ProcessRef> {
         let _ = child.wait();
     });
     // The worker registers itself first thing; wait for it to learn its identity.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Ok(entries) = crate::journal::read(&paths.txn_dir(id))
-            && let Some(worker) = crate::journal::writers(&entries).into_iter().next()
-        {
-            return Ok(worker);
-        }
-        ensure!(Instant::now() < deadline, "the worker did not start");
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    crate::journal::await_worker(&paths.txn_dir(id), before, Duration::from_secs(10))
 }
 
 const PROC_PGRP_ONLY: u32 = 2;
@@ -264,6 +282,9 @@ fn tool_envs(paths: &Paths) -> Vec<(&'static str, String)> {
 /// changed, the service with the upstream tool run from the protected transaction directory
 /// (the tool looks for the service binary beside itself), then replaces this component.
 pub fn apply(paths: &Paths, txn: &Txn, payload: &Payload, journal: &mut Journal) -> Result<Components> {
+    if txn.kind == Kind::Core {
+        return apply_core(paths, txn, payload, journal);
+    }
     ensure!(
         txn.kind == Kind::Bundle,
         "a {:?} payload does not apply to macOS",
@@ -271,13 +292,14 @@ pub fn apply(paths: &Paths, txn: &Txn, payload: &Payload, journal: &mut Journal)
     );
     let manifest = &payload.manifest;
     let tools = paths.txn_dir(&txn.id).join("tools");
-    std::fs::create_dir_all(&tools)?;
+    super::create_dir_durable(&tools)?;
     let mut extracted = vec![TOOL.to_owned(), "clash-verge-service".to_owned()];
     extracted.extend(manifest.cores.iter().map(|core| core.name.clone()));
     for name in &extracted {
         let file = tools.join(name);
         payload.extract(name, &file)?;
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
+        super::sync_published(&file)?;
     }
 
     // The bundle was replaced by the GUI; that part is the client's word.
@@ -343,11 +365,12 @@ fn publish_cores(
             .find(|core| core.name == change.name)
             .context("missing core")?;
         let approved = approved_core(&core.name);
+        super::check_approved(&approved)?;
         let current = sha(&approved);
         // The tool takes the core's name from the file name, so the backup keeps it.
         let backup = current.as_ref().map(|_| backup_dir.join(&core.name));
         if let Some(backup) = &backup {
-            std::fs::create_dir_all(&backup_dir)?;
+            super::create_dir_durable(&backup_dir)?;
             copy_synced(&approved, backup)?;
         }
         let step = journal.intent(
@@ -362,9 +385,83 @@ fn publish_cores(
         ];
         let code = run_writer(journal, step, &tools.join(TOOL), &args, &tool_envs(paths))?;
         ensure!(code == 0, "publishing {} to the service failed ({code})", core.name);
+        super::sync_published(&approved)?;
         journal.done(step)?;
     }
     Ok(changes)
+}
+
+/// Publishes the core of a core payload under both names, with the service tool of the kept app
+/// payload. The bundle's cores are the GUI's to replace.
+fn apply_core(paths: &Paths, txn: &Txn, payload: &Payload, journal: &mut Journal) -> Result<Components> {
+    let state = State::load(&paths.state_file())?;
+    check_ready_core(paths, &state)?;
+    let floor = state.floor.as_deref().context("no kept app payload")?;
+    let app = crate::txn::load_payload(paths, floor)?;
+    let tools = paths.txn_dir(&txn.id).join("tools");
+    super::create_dir_durable(&tools)?;
+    for name in [TOOL, "clash-verge-service"] {
+        let file = tools.join(name);
+        app.extract(name, &file)?;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
+        super::sync_published(&file)?;
+    }
+    let backup_dir = paths.txn_dir(&txn.id).join("backup");
+    let mut components = Components::default();
+    for (core, copy) in super::core_copies(paths, txn, payload)? {
+        let approved = approved_core(&core.name);
+        super::check_approved(&approved)?;
+        let current = super::existing_sha(&approved)?;
+        if current.as_deref() == Some(core.sha256.as_str()) {
+            continue;
+        }
+        // The tool takes the core's name from the file name, so the backup keeps it.
+        let backup = match current {
+            Some(_) => {
+                super::create_dir_durable(&backup_dir)?;
+                let backup = backup_dir.join(&core.name);
+                super::copy_keeping_time(&approved, &backup)?;
+                Some(backup)
+            }
+            None => None,
+        };
+        let step = journal.intent(
+            "publish_core",
+            json!({ "name": core.name, "old_sha": current, "new_sha": core.sha256, "backup": backup, "tool": tools.join(TOOL), "core_upgrade": true }),
+        )?;
+        let args: Vec<OsString> = vec![
+            "--install-core".into(),
+            copy.into_os_string(),
+            "--sha256".into(),
+            core.sha256.clone().into(),
+        ];
+        let code = run_writer(journal, step, &tools.join(TOOL), &args, &tool_envs(paths))?;
+        ensure!(code == 0, "publishing {} to the service failed ({code})", core.name);
+        super::sync_published(&approved)?;
+        journal.done(step)?;
+        components.cores.push(CoreChange {
+            name: core.name.clone(),
+            from: None,
+            to: core.version.clone(),
+        });
+    }
+    Ok(components)
+}
+
+/// Confirms the service's approved cores are the payload's and the service runs.
+pub fn verify_core(manifest: &Manifest) -> Result<()> {
+    for core in &manifest.cores {
+        ensure!(
+            sha(&approved_core(&core.name)).as_deref() == Some(core.sha256.as_str()),
+            "the service has a different {}",
+            core.name
+        );
+    }
+    ensure!(
+        Path::new(SERVICE_PLIST).exists() && service_running(),
+        "the service is not running"
+    );
+    Ok(())
 }
 
 fn launchctl(args: &[&str]) -> Result<()> {
@@ -502,22 +599,48 @@ fn replace_updater(paths: &Paths, payload: &Payload, journal: &mut Journal) -> R
     Ok(true)
 }
 
+/// What undoing a published core calls for, and the approved copy it is about.
+fn publish_core_plan(data: &serde_json::Value) -> Result<(super::CoreUndo, PathBuf)> {
+    let name = json_str(data, "name").context("no core name")?;
+    let approved = approved_core(&name);
+    let current = super::existing_sha(&approved)?;
+    let plan = super::core_undo(
+        current.as_deref(),
+        json_str(data, "old_sha").as_deref(),
+        json_str(data, "new_sha").as_deref(),
+        json_str(data, "backup").is_some(),
+        data["core_upgrade"].as_bool() == Some(true),
+    );
+    Ok((plan, approved))
+}
+
+/// Whether something else changed what a step of a core upgrade wrote, so undoing it would mix
+/// that change with this one.
+pub fn foreign(entry: &Entry) -> Result<bool> {
+    Ok(entry.name == "publish_core" && publish_core_plan(&entry.data)?.0 == super::CoreUndo::Superseded)
+}
+
 pub fn undo(paths: &Paths, txn: &Txn, entry: &Entry, _done: bool, writers_started: bool) -> Result<Undo> {
     let data = &entry.data;
     match entry.name.as_str() {
         "publish_core" => {
             let name = json_str(data, "name").context("no core name")?;
-            let current = sha(&approved_core(&name));
-            let old = json_str(data, "old_sha");
-            if current == old {
-                return Ok(Undo::Clean);
+            let (plan, approved) = publish_core_plan(data)?;
+            match plan {
+                super::CoreUndo::Clean => {
+                    super::sync_current(&approved)?;
+                    return Ok(Undo::Clean);
+                }
+                super::CoreUndo::Superseded => return Ok(Undo::Superseded),
+                super::CoreUndo::Remove => {
+                    std::fs::remove_file(&approved)?;
+                    sync_parent(&approved)?;
+                    return Ok(Undo::Restored);
+                }
+                super::CoreUndo::Restore => {}
             }
-            if current != json_str(data, "new_sha") {
-                return Ok(Undo::Superseded);
-            }
-            let (Some(old), Some(backup)) = (old, json_str(data, "backup")) else {
-                // A core the service did not have before; leaving it is harmless.
-                return Ok(Undo::Clean);
+            let (Some(old), Some(backup)) = (json_str(data, "old_sha"), json_str(data, "backup")) else {
+                bail!("no backup of {name} to restore");
             };
             // Restoring writes as much as publishing did, so it is registered alike.
             let journal = Journal::open(&paths.txn_dir(&txn.id))?;
@@ -525,6 +648,7 @@ pub fn undo(paths: &Paths, txn: &Txn, entry: &Entry, _done: bool, writers_starte
             let args: Vec<OsString> = vec!["--install-core".into(), backup.into(), "--sha256".into(), old.into()];
             let code = run_writer(&journal, entry.step, &tool, &args, &tool_envs(paths))?;
             ensure!(code == 0, "restoring {name} to the service failed ({code})");
+            super::sync_published(&approved)?;
             Ok(Undo::Restored)
         }
         // Swapped back on the spot when the new program does not start.

@@ -11,7 +11,7 @@ use clash_verge_updater::audit::{AuditLog, Components, CoreChange, Record, Sourc
 use clash_verge_updater::manifest::{Kind, Manifest, Role};
 use clash_verge_updater::paths::{PIPE_NAME, Paths, SERVICE_NAME};
 use clash_verge_updater::payload::{Payload, sha256_file};
-use clash_verge_updater::state::{Initiator, ProcessRef, Txn};
+use clash_verge_updater::state::{Initiator, ProcessRef, State, Txn};
 use clash_verge_updater::sys::{self, ProcessInfo};
 use serde_json::json;
 use std::ffi::{OsStr, OsString, c_void};
@@ -142,6 +142,22 @@ fn approved_core(file: &str) -> PathBuf {
     service_root().join("cores").join(file)
 }
 
+/// An approved core is read and kept to restore only where nobody but SYSTEM, Administrators or
+/// TrustedInstaller can have changed it: putting it back through the service tool would publish
+/// whatever it holds. The service checks the same before it runs one.
+fn check_approved(path: &Path) -> Result<()> {
+    let dir = path.parent().context("an approved core has no directory")?;
+    // Without the directory there is nothing to read.
+    if !dir.exists() {
+        return Ok(());
+    }
+    windows_trust::check(dir).with_context(|| format!("{} is not protected", dir.display()))?;
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        _ => windows_trust::check(path).with_context(|| format!("{} is not protected", path.display())),
+    }
+}
+
 fn service_binary() -> PathBuf {
     service_root().join("bin").join("clash-verge-service.exe")
 }
@@ -270,8 +286,36 @@ pub fn prepare_layout(paths: &Paths) -> Result<()> {
     set_dacl(&lock, LOCK_SDDL)
 }
 
-/// SYSTEM writes into and runs from the install directory only if nobody else can change it.
 pub fn check_ready(_manifest: &Manifest) -> Result<()> {
+    check_install_protected()
+}
+
+/// A core upgrade replaces the cores in the install directory and publishes with the service tool
+/// there, so the same protection is needed.
+pub fn check_ready_core(_paths: &Paths, _state: &State) -> Result<()> {
+    check_install_protected()?;
+    if service_installed() {
+        let tool = install_dir()
+            .context("Clash Verge is not registered as installed")?
+            .join(r"resources\clash-verge-service-install.exe");
+        ensure!(tool.is_file(), "the service tool is missing");
+    }
+    Ok(())
+}
+
+pub fn service_installed() -> bool {
+    service_binary().exists()
+}
+
+pub fn approved_cores() -> Vec<(String, PathBuf)> {
+    ["verge-mihomo", "verge-mihomo-alpha"]
+        .into_iter()
+        .map(|name| (name.to_owned(), approved_core(&format!("{name}.exe"))))
+        .collect()
+}
+
+/// SYSTEM writes into and runs from the install directory only if nobody else can change it.
+fn check_install_protected() -> Result<()> {
     let dir = install_dir().context("Clash Verge is not registered as installed")?;
     windows_trust::check(&dir).context("the install directory is not protected")?;
     // Files keep their own ACL when an installer writes over them, so those that run as SYSTEM
@@ -635,8 +679,131 @@ pub fn apply(paths: &Paths, txn: &Txn, payload: &Payload, journal: &mut Journal)
     match txn.kind {
         Kind::Patch => apply_patch(paths, txn, payload, journal),
         Kind::Full => apply_full(paths, txn, payload, journal),
+        Kind::Core => apply_core(paths, txn, payload, journal),
         other => bail!("a {other:?} payload does not apply to Windows"),
     }
+}
+
+/// Upgrades the cores alone: publishes the core of a core payload to the service under both names
+/// with the service tool of the install directory, then swaps the app's cores as a patch does.
+fn apply_core(paths: &Paths, txn: &Txn, payload: &Payload, journal: &mut Journal) -> Result<Components> {
+    let install = install_dir().context("no install directory")?;
+    let copies = super::core_copies(paths, txn, payload)?;
+    let backup_dir = paths.txn_dir(&txn.id).join("backup");
+    let mut components = Components::default();
+    if service_installed() {
+        let tools = paths.txn_dir(&txn.id).join("tools");
+        std::fs::create_dir_all(&tools)?;
+        for name in ["clash-verge-service.exe", "clash-verge-service-install.exe"] {
+            clash_verge_updater::state::copy_synced(&install.join("resources").join(name), &tools.join(name))?;
+        }
+        let tool = tools.join("clash-verge-service-install.exe");
+        for (core, copy) in &copies {
+            let file = payload.manifest.core_file_name(&core.name);
+            let approved = approved_core(&file);
+            check_approved(&approved)?;
+            let current = super::existing_sha(&approved)?;
+            if current.as_deref() == Some(core.sha256.as_str()) {
+                continue;
+            }
+            // The tool takes the core's name from the file name, so the backup keeps it.
+            let backup = match current {
+                Some(_) => {
+                    std::fs::create_dir_all(&backup_dir)?;
+                    let backup = backup_dir.join(&file);
+                    super::copy_keeping_time(&approved, &backup)?;
+                    Some(backup)
+                }
+                None => None,
+            };
+            let step = journal.intent(
+                "publish_core",
+                json!({ "file": file, "old_sha": current, "new_sha": core.sha256, "backup": backup, "tool": tool, "core_upgrade": true }),
+            )?;
+            let code = run_writer(
+                journal,
+                step,
+                &tool,
+                &[
+                    OsStr::new("--install-core"),
+                    copy.as_os_str(),
+                    OsStr::new("--sha256"),
+                    OsStr::new(&core.sha256),
+                ],
+                TOOL_TIMEOUT,
+            )?;
+            ensure!(code == 0, "publishing {} to the service failed ({code})", core.name);
+            journal.done(step)?;
+            components.cores.push(CoreChange {
+                name: core.name.clone(),
+                from: None,
+                to: core.version.clone(),
+            });
+        }
+    }
+
+    let mut swaps = Vec::new();
+    for (core, copy) in &copies {
+        let file = payload.manifest.core_file_name(&core.name);
+        let target = install.join(&file);
+        let old_sha = super::existing_sha(&target)?;
+        if old_sha.as_deref() != Some(core.sha256.as_str()) {
+            swaps.push((file, copy, target, old_sha, core.sha256.clone()));
+        }
+    }
+    if swaps.is_empty() {
+        return Ok(components);
+    }
+    // Staged in the install directory, so each swap is a rename on the same volume.
+    let staging = install.join(format!(".update-{}", txn.id));
+    let step = journal.intent("extract", json!({ "dir": staging }))?;
+    std::fs::create_dir(&staging).with_context(|| format!("failed to create {}", staging.display()))?;
+    for (file, copy, ..) in &swaps {
+        super::copy_keeping_time(copy, &staging.join(file))?;
+    }
+    journal.done(step)?;
+    for (file, _, target, old_sha, new_sha) in &swaps {
+        let old = PathBuf::from(format!("{}.old-{}", target.display(), txn.id));
+        let staged = staging.join(file);
+        let step = journal.intent(
+            "swap",
+            json!({ "target": target, "old": old, "staged": staged, "old_sha": old_sha, "new_sha": new_sha }),
+        )?;
+        if target.exists() {
+            move_file(target, &old, MOVEFILE_WRITE_THROUGH)?;
+        }
+        move_file(&staged, target, MOVEFILE_WRITE_THROUGH)?;
+        journal.done(step)?;
+    }
+    let _ = std::fs::remove_dir_all(&staging);
+    clean_old_files(&install, &txn.id);
+    Ok(components)
+}
+
+/// Confirms the service's approved cores and the app's are the payload's, and the service runs.
+pub fn verify_core(manifest: &Manifest) -> Result<()> {
+    let install = install_dir().context("no install directory")?;
+    let installed = service_installed();
+    for core in &manifest.cores {
+        let file = manifest.core_file_name(&core.name);
+        ensure!(
+            sha(&install.join(&file)).as_deref() == Some(core.sha256.as_str()),
+            "the app has a different {}",
+            core.name
+        );
+        if installed {
+            ensure!(
+                sha(&approved_core(&file)).as_deref() == Some(core.sha256.as_str()),
+                "the service has a different {}",
+                core.name
+            );
+        }
+    }
+    ensure!(
+        !installed || service_running("clash_verge_service"),
+        "the service is not running"
+    );
+    Ok(())
 }
 
 /// Publishes changed cores to the service with its own tool, run from the protected transaction
@@ -653,13 +820,15 @@ fn publish_cores(paths: &Paths, txn: &Txn, payload: &Payload, journal: &mut Jour
     for core in &manifest.cores {
         let file = manifest.core_file_name(&core.name);
         let approved = approved_core(&file);
-        if !service_root().exists() {
+        // A service uninstalled the usual way leaves its root directory behind.
+        if !service_installed() {
             break;
         }
         let current = sha(&approved);
         if current.as_deref() == Some(core.sha256.as_str()) {
             continue;
         }
+        check_approved(&approved)?;
         let staged = tools.join(&file);
         payload.extract(&file, &staged)?;
         let backup = current.as_ref().map(|_| backup_dir.join(&file));
@@ -1028,6 +1197,37 @@ pub fn uninstall_self() -> Result<()> {
 
 // ---------------------------------------------------------------- undo and verify
 
+/// What undoing a published core calls for, and the approved copy it is about.
+fn publish_core_plan(data: &serde_json::Value) -> Result<(super::CoreUndo, PathBuf)> {
+    let file = json_str(data, "file").context("no file")?;
+    let approved = approved_core(&file);
+    let current = super::existing_sha(&approved)?;
+    let plan = super::core_undo(
+        current.as_deref(),
+        json_str(data, "old_sha").as_deref(),
+        json_str(data, "new_sha").as_deref(),
+        json_str(data, "backup").is_some(),
+        data["core_upgrade"].as_bool() == Some(true),
+    );
+    Ok((plan, approved))
+}
+
+/// Whether something else changed what a step of a core upgrade wrote, so undoing it would mix
+/// that change with this one.
+pub fn foreign(entry: &Entry) -> Result<bool> {
+    let data = &entry.data;
+    Ok(match entry.name.as_str() {
+        "publish_core" => publish_core_plan(data)?.0 == super::CoreUndo::Superseded,
+        "swap" => {
+            let current = super::existing_sha(&json_path(data, "target")?)?;
+            // Between the two moves of a swap the target is missing and the old file set aside.
+            let midway = current.is_none() && json_path(data, "old")?.exists();
+            current != json_str(data, "old_sha") && current != json_str(data, "new_sha") && !midway
+        }
+        _ => false,
+    })
+}
+
 pub fn undo(paths: &Paths, txn: &Txn, entry: &Entry, done: bool, writers_started: bool) -> Result<Undo> {
     let data = &entry.data;
     match entry.name.as_str() {
@@ -1037,17 +1237,23 @@ pub fn undo(paths: &Paths, txn: &Txn, entry: &Entry, done: bool, writers_started
         }
         "publish_core" => {
             let file = json_str(data, "file").context("no file")?;
-            let current = sha(&approved_core(&file));
-            let old = json_str(data, "old_sha");
-            if current == old {
-                return Ok(Undo::Clean);
+            let (plan, approved) = publish_core_plan(data)?;
+            match plan {
+                super::CoreUndo::Clean => return Ok(Undo::Clean),
+                super::CoreUndo::Superseded => return Ok(Undo::Superseded),
+                super::CoreUndo::Remove => {
+                    // A core that runs cannot be deleted, but it can be moved aside.
+                    let aside = PathBuf::from(format!("{}.undone-{}", approved.display(), txn.id));
+                    move_file(&approved, &aside, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)?;
+                    if std::fs::remove_file(&aside).is_err() {
+                        delete_on_reboot(&aside);
+                    }
+                    return Ok(Undo::Restored);
+                }
+                super::CoreUndo::Restore => {}
             }
-            if current != json_str(data, "new_sha") {
-                return Ok(Undo::Superseded);
-            }
-            let (Some(old), Some(backup)) = (old, json_str(data, "backup")) else {
-                // A core the service did not have before; leaving it is harmless.
-                return Ok(Undo::Clean);
+            let (Some(old), Some(backup)) = (json_str(data, "old_sha"), json_str(data, "backup")) else {
+                bail!("no backup of {file} to restore");
             };
             // Restoring writes as much as publishing did, so it is confined and registered alike.
             let journal = Journal::open(&paths.txn_dir(&txn.id))?;

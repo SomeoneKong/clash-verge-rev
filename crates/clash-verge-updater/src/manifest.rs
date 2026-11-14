@@ -47,9 +47,9 @@ impl Platform {
 
     const fn kinds(self) -> &'static [Kind] {
         match self {
-            Self::WindowsX86_64 => &[Kind::Patch, Kind::Full],
-            Self::LinuxX86_64 | Self::LinuxAarch64 => &[Kind::Deb],
-            Self::DarwinAarch64 => &[Kind::Bundle],
+            Self::WindowsX86_64 => &[Kind::Patch, Kind::Full, Kind::Core],
+            Self::LinuxX86_64 | Self::LinuxAarch64 => &[Kind::Deb, Kind::Core],
+            Self::DarwinAarch64 => &[Kind::Bundle, Kind::Core],
         }
     }
 }
@@ -65,6 +65,8 @@ pub enum Kind {
     Deb,
     /// Replaces the macOS app bundle (by the GUI) and publishes its privileged parts.
     Bundle,
+    /// Upgrades the cores alone: the service's approved copies and those beside the app.
+    Core,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,13 +146,13 @@ impl Manifest {
             ensure!(names.insert(file.path.as_str()), "{} is listed twice", file.path);
         }
         self.validate_layout()?;
-        // An installer or package carries its cores inside; a patch or bundle carries them as files.
-        let carries_cores = matches!(self.kind, Kind::Patch | Kind::Bundle);
+        // An installer or package carries its cores inside; the other kinds carry them as files.
+        let carries_cores = matches!(self.kind, Kind::Patch | Kind::Bundle | Kind::Core);
         for core in &self.cores {
             ensure!(is_sha256(&core.sha256), "bad digest for core {}", core.name);
             if carries_cores {
                 let file = self
-                    .file(&self.core_file_name(&core.name))
+                    .file(&self.core_source(&core.name))
                     .with_context(|| format!("core {} has no file", core.name))?;
                 ensure!(
                     file.sha256 == core.sha256,
@@ -192,13 +194,15 @@ impl Manifest {
                 named("clash-verge-service-install", Role::ServiceTool),
                 named("clash-verge-updater", Role::Updater),
             ],
+            // One program serves both core names.
+            Kind::Core => vec![named("verge-mihomo", Role::Core)],
             Kind::Full | Kind::Deb => Vec::new(),
         };
         let single = match self.kind {
             Kind::Full => Some((Role::Installer, "-setup.exe")),
             Kind::Deb => Some((Role::Package, ".deb")),
             Kind::Bundle => Some((Role::Bundle, ".app.tar.gz")),
-            Kind::Patch => None,
+            Kind::Patch | Kind::Core => None,
         };
         if let Some((role, suffix)) = single {
             let file = self
@@ -222,6 +226,19 @@ impl Manifest {
             ),
             Kind::Full => ensure!(self.fingerprint.is_some(), "a full payload names its fingerprint"),
             Kind::Bundle => ensure!(self.bundle.is_some(), "a bundle payload carries its update metadata"),
+            Kind::Core => {
+                let mut names: Vec<&str> = self.cores.iter().map(|core| core.name.as_str()).collect();
+                names.sort_unstable();
+                ensure!(names == CORE_NAMES, "a core payload names both cores once");
+                ensure!(
+                    self.base_fingerprint.is_none()
+                        && self.fingerprint.is_none()
+                        && self.service.is_none()
+                        && self.updater.is_none()
+                        && self.bundle.is_none(),
+                    "a core payload carries nothing but the core"
+                );
+            }
             Kind::Deb => {}
         }
         ensure!(
@@ -237,6 +254,15 @@ impl Manifest {
 
     pub fn files_with(&self, role: Role) -> impl Iterator<Item = &FileEntry> {
         self.files.iter().filter(move |file| file.role == role)
+    }
+
+    /// The payload file a core comes from: its own, or the one program of a core payload.
+    pub fn core_source(&self, core: &str) -> String {
+        if self.kind == Kind::Core {
+            self.core_file_name(CORE_NAMES[0])
+        } else {
+            self.core_file_name(core)
+        }
     }
 
     pub fn core_file_name(&self, core: &str) -> String {
@@ -354,6 +380,39 @@ mod tests {
         let mut no_tool = bundle;
         no_tool.files.retain(|file| file.role != Role::ServiceTool);
         assert!(no_tool.validate().is_err());
+    }
+
+    #[test]
+    fn a_core_payload_holds_one_program_for_both_names() {
+        let core = |name: &str| CoreEntry {
+            name: name.into(),
+            version: "v1.19.34-custom.9".into(),
+            sha256: D.into(),
+        };
+        let payload = Manifest {
+            version: "v1.19.34-custom.9".into(),
+            kind: Kind::Core,
+            base_fingerprint: None,
+            fingerprint: None,
+            files: vec![entry("verge-mihomo.exe", Role::Core)],
+            cores: vec![core("verge-mihomo"), core("verge-mihomo-alpha")],
+            ..patch()
+        };
+        payload.validate().unwrap();
+        assert_eq!(payload.core_source("verge-mihomo-alpha"), "verge-mihomo.exe");
+
+        let mut one_name = payload.clone();
+        one_name.cores.pop();
+        assert!(one_name.validate().is_err());
+        let mut other_digest = payload.clone();
+        other_digest.cores[1].sha256 = "1".repeat(64);
+        assert!(other_digest.validate().is_err());
+        let mut with_service = payload.clone();
+        with_service.service = Some(D.into());
+        assert!(with_service.validate().is_err());
+        let mut two_files = payload;
+        two_files.files.push(entry("verge-mihomo-alpha.exe", Role::Core));
+        assert!(two_files.validate().is_err());
     }
 
     #[test]
