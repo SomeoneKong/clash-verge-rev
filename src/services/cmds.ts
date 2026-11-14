@@ -16,6 +16,7 @@ import type {
   ProfilePatch,
   ProfileCreate,
   UsageQuery,
+  LoginProfile,
 } from './bindings'
 
 export type {
@@ -520,4 +521,33 @@ export async function getProxyUsage(query: UsageQuery) {
 
 export async function exportProxyUsage(path: string) {
   return commands.exportProxyUsage(path)
+}
+
+export type {
+  LoginProfile,
+  NodeLoginOutcome,
+  NodeLogins,
+  NodeRow,
+  NodeState,
+  RunningNode,
+} from './bindings'
+
+export async function getProfileLoginNodes() {
+  return commands.getProfileLoginNodes()
+}
+
+export async function getNodeLogins(profiles: LoginProfile[]) {
+  return commands.getNodeLogins(profiles)
+}
+
+export async function loginNode(
+  name: string,
+  instance: string,
+  authKey: string | null,
+) {
+  return commands.loginNode(name, instance, authKey)
+}
+
+export async function logoutNode(name: string, instance: string) {
+  return commands.logoutNode(name, instance)
 }

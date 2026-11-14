@@ -1098,6 +1098,7 @@ dependencies = [
  "clash-verge-limiter",
  "clash-verge-logging",
  "clash-verge-media-unlock",
+ "clash-verge-node-login",
  "clash-verge-signal",
  "clash-verge-updater",
  "clash-verge-usage",
@@ -1218,6 +1219,15 @@ dependencies = [
  "serde_json",
  "specta",
  "tokio",
+]
+
+[[package]]
+name = "clash-verge-node-login"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_yaml_ng",
+ "specta",
 ]
 
 [[package]]
@@ -7491,7 +7501,7 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-mihomo"
 version = "0.6.0"
-source = "git+https://github.com/SomeoneKong/tauri-plugin-mihomo?rev=6d32bef8bb139f14ac316a55f99ab2f80912dce8#6d32bef8bb139f14ac316a55f99ab2f80912dce8"
+source = "git+https://github.com/SomeoneKong/tauri-plugin-mihomo?rev=39ec5ed0214fef60be4abf5d5a3c859022c2f95d#39ec5ed0214fef60be4abf5d5a3c859022c2f95d"
 dependencies = [
  "arc-swap",
  "clashmap",

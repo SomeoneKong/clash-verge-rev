@@ -1,0 +1,84 @@
+{
+  "entry": "ノードログイン",
+  "title": "ノードログイン",
+  "currentProfile": "現在のプロファイル",
+  "officialServer": "Tailscale 公式",
+  "empty": "ログインが必要なノードはありません。現在は tailscale ノードに対応しています",
+  "unsupported": "現在のコアはノードログインに対応していません。コアを更新してください",
+  "loadFailed": "ノードの状態を取得できませんでした：{{error}}",
+  "states": {
+    "notStarted": "未起動",
+    "starting": "起動中",
+    "needsLogin": "ログインが必要",
+    "needsApproval": "承認待ち",
+    "running": "ログイン済み",
+    "stopped": "停止",
+    "failed": "失敗",
+    "unknown": "不明"
+  },
+  "fields": {
+    "device": "デバイス",
+    "user": "アカウント",
+    "addresses": "アドレス",
+    "controlServer": "コントロールサーバー",
+    "keyExpiry": "キーの有効期限",
+    "error": "エラー"
+  },
+  "actions": {
+    "login": "ログイン…",
+    "logout": "ログアウト"
+  },
+  "settings": {
+    "controlServer": "コントロールサーバー {{url}}",
+    "ephemeral": "エフェメラルノード",
+    "notEphemeral": "エフェメラルでないノード",
+    "authKey": "auth-key あり",
+    "noAuthKey": "auth-key なし"
+  },
+  "notes": {
+    "shared": "現在のプロファイルの {{name}} とデバイス ID を共有しています",
+    "pendingSettings": "このプロファイルの設定（切り替え後に有効）：{{settings}}",
+    "controlServerDiffers": "コントロールサーバーが異なるため、切り替え後に再ログインが必要になる場合があります",
+    "conflict": "現在のプロファイルの複数のノードがこのデバイス ID を共有しています：{{names}}",
+    "inactive": "無効です。このプロファイルに切り替えると状態の確認とログインができます",
+    "invalid": "このノードの state-dir は現在のコアで許可されていません（コアの作業ディレクトリと SAFE_PATHS 配下のみ許可）。設定を修正してください",
+    "keyExpired": "キーの有効期限が切れています。再ログインして更新するか、ログアウトして認証キーで別のアカウントにログインしてください",
+    "needsApproval": "コントロールサーバーの管理者によるデバイスの承認を待っています",
+    "failed": "問題を修正してから設定を再読み込みしてください（現在のプロファイルを再適用するなど）"
+  },
+  "login": {
+    "title": "{{name}} にログイン",
+    "sharedTitle": "現在のプロファイルの {{name}} にログイン（{{profile}} の {{node}} とデバイス ID を共有）",
+    "keySection": "認証キーでログイン",
+    "keyLabel": "認証キー",
+    "keyNote": "認証キーは今回のログインにのみ使用され、保存されません",
+    "showKey": "認証キーを表示",
+    "hideKey": "認証キーを隠す",
+    "submit": "ログイン",
+    "waiting": "最大 {{seconds}} 秒待ちます",
+    "linkSection": "ブラウザでログイン",
+    "getLink": "ログインリンクを取得",
+    "copyLink": "リンクをコピー",
+    "openLink": "ブラウザで開く",
+    "copied": "リンクをコピーしました",
+    "linkNote": "ブラウザでリンクを開いてログインを完了してください。OIDC 未設定の Headscale では、サーバーで実行する登録コマンドがページに表示されます。完了するとここで自動的にログイン済みになります。",
+    "approval": "コントロールサーバーの管理者によるデバイスの承認を待っています。承認されると自動的にログイン済みになります",
+    "success": "{{name}} にログインしました：{{device}} {{addresses}}"
+  },
+  "logout": {
+    "title": "ログアウト",
+    "confirm": "{{name}} からログアウトしますか？",
+    "sharedTarget": "ログアウトするのは現在のプロファイルの {{name}} です（{{profile}} の {{node}} とデバイス ID を共有）",
+    "effect": "ログアウト後、このノードを経由する接続は失敗し、再ログインが必要です",
+    "ephemeral": "このノードはエフェメラルノードのため、デバイスはコントロールサーバーから削除されます",
+    "configAuthKey": "このノードの設定には auth-key があるため、次回起動時に自動的に再ログインします",
+    "success": "{{name}} からログアウトしました"
+  },
+  "errors": {
+    "timeout": "結果はまだ確認できていません。後でノードの状態を確認してください",
+    "changed": "ノードが変更されました。もう一度操作してください",
+    "loggedIn": "ノードにはデバイス ID があります。認証キーでログインする前にログアウトしてください",
+    "rejected": "ログインに失敗しました：{{message}}",
+    "startFailed": "ノードの起動に失敗しました：{{message}}"
+  }
+}
