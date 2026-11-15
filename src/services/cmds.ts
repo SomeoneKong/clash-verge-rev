@@ -17,6 +17,7 @@ import type {
   ProfileCreate,
   UsageQuery,
   LoginProfile,
+  HistoryQuery,
 } from './bindings'
 
 export type {
@@ -521,6 +522,18 @@ export async function getProxyUsage(query: UsageQuery) {
 
 export async function exportProxyUsage(path: string) {
   return commands.exportProxyUsage(path)
+}
+
+export async function getProbeView() {
+  return commands.getProbeView()
+}
+
+export async function queryProbeHistory(query: HistoryQuery) {
+  return commands.queryProbeHistory(query)
+}
+
+export async function refreshProbeHistory() {
+  return commands.refreshProbeHistory()
 }
 
 export type {

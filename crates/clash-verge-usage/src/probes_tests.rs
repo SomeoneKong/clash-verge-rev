@@ -755,3 +755,278 @@ fn a_context_kept_is_never_unavailable_whichever_answer_came_first() {
     let kept: crate::probes::InstanceContexts = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert!(kept.unavailable.is_empty());
 }
+
+fn shown(seq: u64, day: i64, category: &str, scope: Value, member: &str, object: u64) -> Value {
+    let mut event = event(seq, day, 1);
+    event["display"] = json!({
+        "v": 1, "category": category, "level": "info", "scope": scope,
+        "members": [{ "name": member, "provider": "", "object": object }],
+        "text": { "zh": "文字", "en": "text" },
+    });
+    event
+}
+
+#[test]
+fn history_lists_the_events_shown_with_the_coverage_of_each_core() {
+    let dir = temp_dir("history");
+    let mut store = ProbeStore::open(&dir, 8).unwrap();
+    store.begin(INSTANCE, "", 1).unwrap();
+    let group = json!({ "kind": "groups", "groups": ["g"] });
+    let other = json!({ "kind": "groups", "groups": ["h"] });
+    let global = json!({ "kind": "global" });
+    store
+        .append(
+            INSTANCE,
+            1,
+            0,
+            &[
+                shown(1, DAY, "switch", group.clone(), "A", 1),
+                event(2, DAY, 1),
+                shown(3, DAY, "switch", other, "B", 2),
+                shown(4, DAY, "network", global, "", 0),
+                shown(5, DAY, "quality", group, "A", 7),
+            ],
+        )
+        .unwrap();
+    store.observe(INSTANCE, 9, "2026-11-15T12:01:00Z").unwrap();
+    let noon = chrono::DateTime::parse_from_rfc3339(event(1, DAY, 1)["time"].as_str().unwrap())
+        .unwrap()
+        .timestamp();
+    let mut query = crate::probes::HistoryQuery {
+        since: noon - 3600,
+        until: noon + 3600,
+        include_global: true,
+        ..Default::default()
+    };
+    let page = store.history(&query).unwrap();
+    assert_eq!(page.events.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 3, 4, 5]);
+    assert_eq!(page.groups, vec!["g", "h"]);
+    assert_eq!(page.categories, vec!["network", "quality", "switch"]);
+    let coverage = &page.instances[0];
+    assert_eq!(coverage.saved_to, 5);
+    assert_eq!(coverage.saved_time.as_deref(), event(5, DAY, 1)["time"].as_str());
+    assert_eq!(coverage.pending, Some(4), "the core had events not collected yet");
+    assert_eq!(coverage.display, None, "the params are not kept");
+    assert!(!coverage.tail_unknown);
+
+    // every group, without the global events
+    query.include_global = false;
+    let page = store.history(&query).unwrap();
+    assert_eq!(page.events.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 3, 5]);
+
+    // a group with the global events
+    query.groups = Some(vec!["g".to_owned()]);
+    query.include_global = true;
+    let page = store.history(&query).unwrap();
+    assert_eq!(page.events.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 4, 5]);
+    // one object of a member, by its instance
+    query.include_global = false;
+    query.member = Some("A".to_owned());
+    query.instance = Some(INSTANCE.to_owned());
+    query.object = Some(7);
+    let page = store.history(&query).unwrap();
+    assert_eq!(page.events.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![5]);
+
+    // a core that tells which events to show
+    store
+        .save_contexts(INSTANCE, &[json!({ "kind": "params", "display": 1 })], &[])
+        .unwrap();
+    let page = store.history(&query).unwrap();
+    assert_eq!(page.instances[0].display, Some(true));
+}
+
+fn noon_query() -> crate::probes::HistoryQuery {
+    let noon = chrono::DateTime::parse_from_rfc3339(event(1, DAY, 1)["time"].as_str().unwrap())
+        .unwrap()
+        .timestamp();
+    crate::probes::HistoryQuery {
+        since: noon - 3600,
+        until: noon + 3600,
+        include_global: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn history_tells_what_an_ended_core_left_unsaved() {
+    let dir = temp_dir("history-ended");
+    let mut store = ProbeStore::open(&dir, 8).unwrap();
+    store.begin(INSTANCE, "", 1).unwrap();
+    let group = json!({ "kind": "groups", "groups": ["g"] });
+    store
+        .append(INSTANCE, 1, 0, &[shown(1, DAY, "switch", group, "A", 1)])
+        .unwrap();
+    store.observe(INSTANCE, 10, "2026-11-15T12:01:00Z").unwrap();
+    // the final collection ran out of time before the core stopped
+    store.mark_stopped(INSTANCE).unwrap();
+    let page = store.history(&noon_query()).unwrap();
+    let coverage = &page.instances[0];
+    assert!(coverage.ended);
+    assert_eq!(coverage.pending, Some(9), "what it had and was not saved is told");
+    assert!(
+        coverage.tail_unknown,
+        "what it recorded after the last collection is unknown"
+    );
+}
+
+#[test]
+fn a_core_observed_without_events_keeps_its_coverage_within_the_retention() {
+    let dir = temp_dir("history-observed");
+    let mut store = ProbeStore::open(&dir, 8).unwrap();
+    store.begin(INSTANCE, "", 1).unwrap();
+    let noon = event(1, DAY, 1)["time"].as_str().unwrap().to_owned();
+    store.observe(INSTANCE, 0, &noon).unwrap();
+    store
+        .save_contexts(INSTANCE, &[json!({ "kind": "params", "display": 1 })], &[])
+        .unwrap();
+    store.mark_stopped(INSTANCE).unwrap();
+    store.retain(DAY).unwrap();
+    let page = store.history(&noon_query()).unwrap();
+    assert_eq!(page.instances.len(), 1);
+    assert_eq!(page.instances[0].display, Some(true));
+    drop(store);
+    let mut store = ProbeStore::open(&dir, 8).unwrap();
+    let page = store.history(&noon_query()).unwrap();
+    assert_eq!(page.instances.len(), 1);
+    // past the retention it goes
+    store.retain(DAY + crate::probes::PROBE_RETENTION_DAYS).unwrap();
+    assert!(store.meta().instances.is_empty());
+}
+
+#[test]
+fn history_keeps_the_newest_events_of_a_long_range() {
+    let dir = temp_dir("history-limit");
+    let mut store = ProbeStore::open(&dir, 8).unwrap();
+    store.begin(INSTANCE, "", 1).unwrap();
+    let group = json!({ "kind": "groups", "groups": ["g"] });
+    let limit = crate::probes::HISTORY_LIMIT as u64;
+    let list: Vec<Value> = (1..=limit + 3)
+        .map(|seq| shown(seq, DAY, "switch", group.clone(), "A", 1))
+        .collect();
+    store.append(INSTANCE, 1, 0, &list).unwrap();
+    let page = store.history(&noon_query()).unwrap();
+    assert!(page.truncated);
+    assert_eq!(page.events.len() as u64, limit);
+    assert_eq!(page.events.first().map(|e| e.seq), Some(4));
+    assert_eq!(page.events.last().map(|e| e.seq), Some(limit + 3));
+}
+
+#[test]
+fn history_finds_a_record_damaged_in_place() {
+    let dir = temp_dir("history-damaged");
+    let mut store = ProbeStore::open(&dir, 8).unwrap();
+    store.begin(INSTANCE, "", 1).unwrap();
+    let group = json!({ "kind": "groups", "groups": ["g"] });
+    store
+        .append(INSTANCE, 1, 0, &[shown(1, DAY, "switch", group, "A", 1)])
+        .unwrap();
+    // the length stays: only reading the file tells
+    let path = day_file(&dir, DAY);
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[0] = b'!';
+    std::fs::write(&path, &bytes).unwrap();
+    let page = store.history(&noon_query()).unwrap();
+    assert!(page.events.is_empty());
+    let gaps = &page.instances[0].gaps;
+    assert_eq!(gaps.len(), 1);
+    assert_eq!((gaps[0].from, gaps[0].to), (1, 1));
+    assert_eq!(gaps[0].reason, SeqGapReason::Corrupt);
+}
+
+#[test]
+fn history_leaves_out_the_gaps_outside_its_range() {
+    let dir = temp_dir("history-gap-range");
+    let mut store = ProbeStore::open(&dir, 8).unwrap();
+    store.begin(INSTANCE, "", 1).unwrap();
+    let group = json!({ "kind": "groups", "groups": ["g"] });
+    let at = |seq: u64, time: &str| {
+        let mut event = shown(seq, DAY, "switch", group.clone(), "A", 1);
+        event["time"] = json!(time);
+        event
+    };
+    store
+        .append(INSTANCE, 1, 0, &[at(1, "2025-11-15T00:01:00+00:00")])
+        .unwrap();
+    // the core dropped the second before it was read
+    store.begin(INSTANCE, "", 3).unwrap();
+    store
+        .append(
+            INSTANCE,
+            1,
+            2,
+            &[at(3, "2025-11-15T00:03:00+00:00"), at(4, "2025-11-15T12:00:00+00:00")],
+        )
+        .unwrap();
+    assert_eq!(store.meta().instances[INSTANCE].gaps.len(), 1);
+    let page = store.history(&noon_query()).unwrap();
+    assert_eq!(page.events.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![4]);
+    assert!(page.instances[0].gaps.is_empty(), "the gap is long before the range");
+    let mut query = noon_query();
+    query.since -= 12 * 3600;
+    let page = store.history(&query).unwrap();
+    assert_eq!(page.instances[0].gaps.len(), 1);
+}
+
+#[test]
+fn history_finds_the_end_of_a_record_damaged_in_place() {
+    let dir = temp_dir("history-damaged-end");
+    let mut store = ProbeStore::open(&dir, 8).unwrap();
+    store.begin(INSTANCE, "", 1).unwrap();
+    let group = json!({ "kind": "groups", "groups": ["g"] });
+    store
+        .append(
+            INSTANCE,
+            1,
+            0,
+            &[
+                shown(1, DAY, "switch", group.clone(), "A", 1),
+                shown(2, DAY, "switch", group, "A", 1),
+            ],
+        )
+        .unwrap();
+    let path = day_file(&dir, DAY);
+    let mut bytes = std::fs::read(&path).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] = b' ';
+    std::fs::write(&path, &bytes).unwrap();
+    let page = store.history(&noon_query()).unwrap();
+    assert_eq!(page.events.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1]);
+    let gaps = &page.instances[0].gaps;
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(
+        (gaps[0].from, gaps[0].to, gaps[0].reason),
+        (2, 2, SeqGapReason::Corrupt)
+    );
+}
+
+#[test]
+fn history_finds_the_events_nearest_to_each_gap() {
+    let dir = temp_dir("history-gap-neighbours");
+    let mut store = ProbeStore::open(&dir, 8).unwrap();
+    store.begin(INSTANCE, "", 1).unwrap();
+    let group = json!({ "kind": "groups", "groups": ["g"] });
+    let at = |seq: u64, time: &str| {
+        let mut event = shown(seq, DAY, "switch", group.clone(), "A", 1);
+        event["time"] = json!(time);
+        event
+    };
+    store
+        .append(INSTANCE, 1, 0, &[at(1, "2025-11-15T11:00:00+00:00")])
+        .unwrap();
+    // gaps at 2 and 4; the event between them is of a day the query does not read
+    store.begin(INSTANCE, "", 3).unwrap();
+    store
+        .append(INSTANCE, 1, 2, &[at(3, "2025-11-05T12:00:00+00:00")])
+        .unwrap();
+    store.begin(INSTANCE, "", 5).unwrap();
+    store
+        .append(INSTANCE, 1, 4, &[at(5, "2025-11-15T12:30:00+00:00")])
+        .unwrap();
+    let page = store.history(&noon_query()).unwrap();
+    let gaps = &page.instances[0].gaps;
+    assert_eq!(gaps.iter().map(|gap| gap.from).collect::<Vec<_>>(), vec![2, 4]);
+    for gap in gaps {
+        assert_eq!(gap.after_time.as_deref(), Some("2025-11-15T11:00:00+00:00"));
+        assert_eq!(gap.before_time.as_deref(), Some("2025-11-15T12:30:00+00:00"));
+    }
+}
