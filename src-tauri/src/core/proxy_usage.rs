@@ -21,7 +21,7 @@ use anyhow::{Context as _, Result, bail};
 use clash_verge_logging::{Type, logging};
 use clash_verge_usage::{
     CoreBucket, CoreEntry, CoreUsage, Identity, InitParams, PROBE_PAGE_SIZE, PROBE_PAGES, ProbeStore, Route, RouteKind,
-    Store, UsageQuery, UsageReport,
+    SeqGapReason, Store, UsageQuery, UsageReport,
 };
 use tauri_plugin_mihomo::models::{ProxyUsage, ProxyUsageKind};
 use tokio::{sync::Mutex, time::Instant};
@@ -52,6 +52,8 @@ static SKIP_FINAL_COLLECTIONS: AtomicBool = AtomicBool::new(false);
 static ARCHIVED_DAY: AtomicI64 = AtomicI64::new(i64::MIN);
 
 static PROBES: LazyLock<Mutex<Option<ProbeStore>>> = LazyLock::new(|| Mutex::new(None));
+/// One collection of the decision records at a time, the periodic one and a refresh alike.
+static PROBE_COLLECTION: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 /// Cores noted as stopped in the usage store, waiting to be noted in the decision records.
 static PROBE_STOPS: LazyLock<parking_lot::Mutex<Vec<String>>> = LazyLock::new(Default::default);
 /// The statistics day the decision records were last trimmed to their retention on.
@@ -327,7 +329,10 @@ async fn maintain_probes() -> Result<()> {
     let current = {
         let mut slot = STORE.lock().await;
         blocking(|| {
-            open_store(&mut slot).map(|store| store.state().instance.as_ref().map(|current| current.id.clone()))
+            let store = open_store(&mut slot)?;
+            // stops confirmed while no collection ran, as when the next core failed to start
+            note_stops(store, None)?;
+            Ok::<_, anyhow::Error>(store.state().instance.as_ref().map(|current| current.id.clone()))
         })?
     };
     with_probes(day_offset, |store| {
@@ -348,42 +353,149 @@ async fn maintain_probes() -> Result<()> {
     .await
 }
 
+/// What a collection of the decision records came to.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeRefresh {
+    /// `caughtUp` when every event the core had when asked is saved, `partial` when the
+    /// budget ran out first or damage found meanwhile is to be read again, `changed` when the
+    /// core restarted or dropped events meanwhile,
+    /// `busy` when another collection took the budget, `unsupported` for a core without
+    /// records, `unreachable` when no core answered in time.
+    pub status: String,
+    pub instance: Option<String>,
+    /// The latest event the core had when asked, and the events saved up to it.
+    pub observed_latest: Option<u64>,
+    pub saved_to: Option<u64>,
+    /// Events still to be read up to `observed_latest`, those read again for a damaged day
+    /// file included.
+    pub remaining: Option<u64>,
+}
+
+impl ProbeRefresh {
+    fn status(status: &str) -> Self {
+        Self {
+            status: status.to_owned(),
+            instance: None,
+            observed_latest: None,
+            saved_to: None,
+            remaining: None,
+        }
+    }
+}
+
+/// Collects the decision records right away, as the periodic collection does and within its
+/// budget, waiting for another collection included. What was started is stored all the same
+/// once the budget is spent.
+pub async fn refresh_probes() -> Result<ProbeRefresh> {
+    let deadline = Instant::now() + PERIODIC_COLLECTION;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = maintain_probes().await {
+            logging!(warn, Type::Core, "Failed to maintain probe records: {error:#}");
+        }
+        let _ = sender.send(collect_probes(deadline).await);
+    });
+    // the writes of the last page read before the deadline
+    match tokio::time::timeout_at(deadline + Duration::from_secs(5), receiver).await {
+        Ok(Ok(result)) => result,
+        _ => Ok(ProbeRefresh::status("busy")),
+    }
+}
+
+/// The decision records with a display a query asks for.
+pub async fn probe_history(query: clash_verge_usage::HistoryQuery) -> Result<clash_verge_usage::HistoryPage> {
+    if let Err(error) = maintain_probes().await {
+        logging!(warn, Type::Core, "Failed to maintain probe records: {error:#}");
+    }
+    let day_offset = day_offset().await?;
+    with_probes(day_offset, |store| store.history(&query)).await
+}
+
 /// Collects the decision records the reachable core has not reported yet, and the contexts
 /// they refer to. A core without them is left alone. No request starts after `deadline`; what
 /// was read is stored all the same.
-async fn collect_probes(deadline: Instant) -> Result<()> {
+async fn collect_probes(deadline: Instant) -> Result<ProbeRefresh> {
+    let Ok(_collection) = tokio::time::timeout_at(deadline, PROBE_COLLECTION.lock()).await else {
+        return Ok(ProbeRefresh::status("busy"));
+    };
+    if Instant::now() >= deadline {
+        return Ok(ProbeRefresh::status("busy"));
+    }
     let mihomo = handle::Handle::mihomo();
     // An empty page tells the instance and what the core keeps.
     let Some(head) = within(deadline, mihomo.get_probe_events(u64::MAX, 1)).await else {
-        return Ok(());
+        return Ok(ProbeRefresh::status("unreachable"));
     };
     let Some(head) = head? else {
-        return Ok(());
+        return Ok(ProbeRefresh::status("unsupported"));
     };
     let instance = head.instance.clone();
     let day_offset = day_offset().await?;
+    let observed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let plan = with_probes(day_offset, |store| {
         note_probe_changes(store)?;
+        store.observe(&instance, head.latest, &observed_at)?;
         store.begin(&instance, &head.started_at, head.oldest)
     })
     .await?;
     // One budget of pages for reading corrupt ranges again and reading on.
     let mut pages = PROBE_PAGES;
-    let mut reads = plan
+    let reads = plan
         .refetch
         .iter()
         .map(|range| (range[0].saturating_sub(1), range[1]))
         .chain(std::iter::once((plan.after, head.latest)));
     let mut paging = PagingEnd::Done;
-    while paging == PagingEnd::Done
-        && let Some((after, until)) = reads.next()
-    {
-        paging = read_probe_events(&instance, after, until, day_offset, &mut pages, deadline).await?;
+    let mut remaining = 0;
+    for (after, until) in reads {
+        if paging != PagingEnd::Done {
+            remaining += until.saturating_sub(after);
+            continue;
+        }
+        let (end, reached) = read_probe_events(&instance, after, until, day_offset, &mut pages, deadline).await?;
+        paging = end;
+        if end != PagingEnd::Done {
+            remaining += until.saturating_sub(reached);
+        }
     }
+    let (saved_to, damaged) = with_probes(day_offset, |store| {
+        let entry = store.meta().instances.get(&instance);
+        // damage a query found meanwhile, which the core still has
+        let damaged: u64 = entry.map_or(0, |entry| {
+            entry
+                .gaps
+                .iter()
+                .filter(|gap| gap.reason == SeqGapReason::Corrupt)
+                .map(|gap| {
+                    let (from, to) = (gap.from.max(head.oldest), gap.to.min(head.latest));
+                    if from <= to { to - from + 1 } else { 0 }
+                })
+                .sum()
+        });
+        Ok((entry.map_or(0, |entry| entry.cursor), damaged))
+    })
+    .await?;
+    if paging == PagingEnd::Done && damaged > 0 {
+        paging = PagingEnd::Budget;
+        remaining += damaged;
+    }
+    let refresh = ProbeRefresh {
+        status: match paging {
+            PagingEnd::Done => "caughtUp",
+            PagingEnd::Budget => "partial",
+            PagingEnd::Changed => "changed",
+        }
+        .to_owned(),
+        instance: Some(instance.clone()),
+        observed_latest: Some(head.latest),
+        saved_to: Some(saved_to),
+        remaining: Some(remaining),
+    };
 
     let missing = with_probes(day_offset, |store| store.missing_contexts(&instance)).await?;
     if missing.is_empty() {
-        return Ok(());
+        return Ok(refresh);
     }
     let Some(response) = within(
         deadline,
@@ -391,7 +503,7 @@ async fn collect_probes(deadline: Instant) -> Result<()> {
     )
     .await
     else {
-        return Ok(());
+        return Ok(refresh);
     };
     // a core replaced between the requests numbers its versions anew
     if let Some(response) = response?
@@ -407,7 +519,7 @@ async fn collect_probes(deadline: Instant) -> Result<()> {
         })
         .await?;
     }
-    Ok(())
+    Ok(refresh)
 }
 
 /// A request of the collection of events, `None` when the budget is spent before it starts or
@@ -431,7 +543,8 @@ enum PagingEnd {
 }
 
 /// Reads the events of `instance` after `after`, up to `until` or the core's latest at the
-/// first page, taking the pages from `pages`.
+/// first page, taking the pages from `pages`; with why it stopped and the event it read up to.
+/// Each page answered by the instance is an observation of it.
 async fn read_probe_events(
     instance: &str,
     mut after: u64,
@@ -439,23 +552,29 @@ async fn read_probe_events(
     day_offset: i64,
     pages: &mut usize,
     deadline: Instant,
-) -> Result<PagingEnd> {
+) -> Result<(PagingEnd, u64)> {
     let mihomo = handle::Handle::mihomo();
     let mut end = until;
     let mut first = true;
     while after < end {
         if *pages == 0 {
-            return Ok(PagingEnd::Budget);
+            return Ok((PagingEnd::Budget, after));
         }
         *pages -= 1;
         let Some(page) = within(deadline, mihomo.get_probe_events(after, PROBE_PAGE_SIZE)).await else {
-            return Ok(PagingEnd::Budget);
+            return Ok((PagingEnd::Budget, after));
         };
         let Some(page) = page? else {
-            return Ok(PagingEnd::Changed);
+            return Ok((PagingEnd::Changed, after));
         };
-        if page.instance != instance || page.oldest > after + 1 {
-            return Ok(PagingEnd::Changed);
+        if page.instance != instance {
+            return Ok((PagingEnd::Changed, after));
+        }
+        let observed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let latest = page.latest;
+        with_probes(day_offset, |store| store.observe(instance, latest, &observed_at)).await?;
+        if page.oldest > after + 1 {
+            return Ok((PagingEnd::Changed, after));
         }
         if first {
             end = end.min(page.latest);
@@ -485,7 +604,7 @@ async fn read_probe_events(
         .await?;
         after = last;
     }
-    Ok(PagingEnd::Done)
+    Ok((PagingEnd::Done, after))
 }
 
 async fn with_probes<T>(day_offset: i64, operation: impl FnOnce(&mut ProbeStore) -> Result<T>) -> Result<T> {

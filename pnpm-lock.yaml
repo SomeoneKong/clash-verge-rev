@@ -293,8 +293,8 @@ importers:
         specifier: ^2.5.1
         version: 2.5.1(react@19.3.1)
       tauri-plugin-mihomo-api:
-        specifier: github:SomeoneKong/tauri-plugin-mihomo#6754a1e2f547a403bdac8fa18dc61305fa32574a
-        version: https://codeload.github.com/SomeoneKong/tauri-plugin-mihomo/tar.gz/6754a1e2f547a403bdac8fa18dc61305fa32574a
+        specifier: github:SomeoneKong/tauri-plugin-mihomo#48beb9fc2acebf8d5c86e500c8336a0623c1df0c
+        version: https://codeload.github.com/SomeoneKong/tauri-plugin-mihomo/tar.gz/48beb9fc2acebf8d5c86e500c8336a0623c1df0c
       types-pac:
         specifier: ^1.0.3
         version: 1.0.3
@@ -4719,8 +4719,8 @@ packages:
     resolution: {integrity: sha512-MFO/QzvtAOmJbkhOaCTvbGcFN9L9b+JunIsDwaKljSOdcLMea3NJ1k9Usz/rjdfSXTq4dfzfeS7W4p4YOAAHeA==}
     engines: {node: '>=18'}
 
-  tauri-plugin-mihomo-api@https://codeload.github.com/SomeoneKong/tauri-plugin-mihomo/tar.gz/6754a1e2f547a403bdac8fa18dc61305fa32574a:
-    resolution: {gitHosted: true, integrity: sha512-s8FOna3L36V6UmfQqaTsTb7p4uJo8ffV8idOjAF+fv9xBXXSOX7pj8Gqcov9Y/9b9ERFAPr81Fr0D1QH1yMXnQ==, tarball: https://codeload.github.com/SomeoneKong/tauri-plugin-mihomo/tar.gz/6754a1e2f547a403bdac8fa18dc61305fa32574a}
+  tauri-plugin-mihomo-api@https://codeload.github.com/SomeoneKong/tauri-plugin-mihomo/tar.gz/48beb9fc2acebf8d5c86e500c8336a0623c1df0c:
+    resolution: {gitHosted: true, integrity: sha512-3e/0Ewpn761IvEeW4H6ev1fLZVbtmJ4lNOetsKxBDokThBsFsndCOp7y+C2oEaqsCzXoZas0+uRYobA/7pg1ug==, tarball: https://codeload.github.com/SomeoneKong/tauri-plugin-mihomo/tar.gz/48beb9fc2acebf8d5c86e500c8336a0623c1df0c}
     version: 0.6.0
 
   teex@1.0.1:
@@ -9718,7 +9718,7 @@ snapshots:
       minizlib: 3.1.0
       yallist: 5.0.0
 
-  tauri-plugin-mihomo-api@https://codeload.github.com/SomeoneKong/tauri-plugin-mihomo/tar.gz/6754a1e2f547a403bdac8fa18dc61305fa32574a:
+  tauri-plugin-mihomo-api@https://codeload.github.com/SomeoneKong/tauri-plugin-mihomo/tar.gz/48beb9fc2acebf8d5c86e500c8336a0623c1df0c:
     dependencies:
       '@tauri-apps/api': 2.12.4
 
