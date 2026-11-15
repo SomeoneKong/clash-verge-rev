@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   getBaseConfig,
   getRuleProviders,
@@ -6,8 +6,10 @@ import {
 } from 'tauri-plugin-mihomo-api'
 
 import { useClashInfo, useRuntimeConfig } from '@/hooks/use-clash'
+import { useProfiles } from '@/hooks/use-profiles'
 import { useVerge } from '@/hooks/use-verge'
 import { getProxyView, getSystemProxy } from '@/services/cmds'
+import delayManager from '@/services/delay'
 import { useQuery } from '@/services/query-client'
 import { useRunState } from '@/store/app-store-context'
 import { resolveDisplayedMixedPort } from '@/utils/mixed-port'
@@ -51,6 +53,12 @@ export const AppDataProvider = ({
   const { verge } = useVerge()
   const { data: runtimeConfig } = useRuntimeConfig()
   const { clashInfo } = useClashInfo()
+  const { profiles } = useProfiles()
+  const currentProfile = profiles?.current
+
+  useEffect(() => {
+    if (currentProfile) delayManager.setProfile(currentProfile)
+  }, [currentProfile])
 
   const {
     data: proxyView,

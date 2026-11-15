@@ -59,3 +59,22 @@ describe('group delay completion', () => {
     stop()
   })
 })
+
+describe('profile switch', () => {
+  test('drops the results measured in the previous profile', async () => {
+    const reread = vi.fn()
+    const stop = delayManager.subscribeEpoch(reread)
+    delayManager.setProfile('a')
+    delayManager.setDelay('n', 'g', 100)
+    delayManager.setProfile('a')
+    expect(delayManager.getDelay('n', 'g')).toBe(100)
+
+    delayManager.setProfile('b')
+    await flush()
+
+    expect(delayManager.getDelay('n', 'g')).toBe(-1)
+    expect(reread).toHaveBeenCalledOnce()
+    expect(settles).toBe(1)
+    stop()
+  })
+})
