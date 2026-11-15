@@ -21,6 +21,7 @@ import {
 } from '@/types/probe-view'
 import {
   memberDetails,
+  providerNameOf,
   type ProxyGroupView,
   type ResolvedProxyMember,
 } from '@/types/proxy-view'
@@ -35,6 +36,16 @@ interface Props {
   selected: boolean
   onClick: (member: ResolvedProxyMember) => void
 }
+
+const TAG_SX = {
+  fontSize: 10,
+  lineHeight: 1.5,
+  px: 0.5,
+  border: '1px solid',
+  borderColor: 'text.secondary',
+  borderRadius: 1,
+  color: 'text.secondary',
+} as const
 
 /** A member in the strategy mode: one row with its place in the group, what it is, its role
  * and state, and its delay; the details of its strategy open within the row. */
@@ -53,6 +64,9 @@ export const MemberStrategyRow = memo(function MemberStrategyRow({
   const details = memberDetails(member)
   const name = member.ref.name
   const type = unresolved ? member.ref.reason : (details?.type ?? '')
+  // Tells apart members of the same name from different providers.
+  const provider =
+    member.kind === 'node' ? providerNameOf(member.node) : undefined
   const tags = unresolved
     ? []
     : [
@@ -125,20 +139,18 @@ export const MemberStrategyRow = memo(function MemberStrategyRow({
               {group.fixed === name && ' 📌'}
             </Typography>
             <Box sx={{ display: 'flex', gap: 0.5, mt: 0.25 }}>
-              {[type, ...tags].filter(Boolean).map((tag) => (
+              {provider && (
                 <Typography
-                  key={tag}
                   component="span"
-                  sx={{
-                    fontSize: 10,
-                    lineHeight: 1.5,
-                    px: 0.5,
-                    border: '1px solid',
-                    borderColor: 'text.secondary',
-                    borderRadius: 1,
-                    color: 'text.secondary',
-                  }}
+                  noWrap
+                  title={provider}
+                  sx={{ ...TAG_SX, minWidth: 0 }}
                 >
+                  {provider}
+                </Typography>
+              )}
+              {[type, ...tags].filter(Boolean).map((tag) => (
+                <Typography key={tag} component="span" sx={TAG_SX}>
                   {tag}
                 </Typography>
               ))}
