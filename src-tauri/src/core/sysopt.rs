@@ -435,7 +435,7 @@ impl Sysopt {
             sys.host = proxy_host.into();
             sys.port = port;
             sys.bypass = bypass.into();
-            auto.url = format!("http://{proxy_host}:{pac_port}/commands/pac");
+            auto.url = server::pac_url(proxy_host, pac_port, &server::pac_script(&verge, port));
 
             // `enable_system_proxy` is the master switch.
             // When disabled, force clear both global proxy and PAC at OS level.
