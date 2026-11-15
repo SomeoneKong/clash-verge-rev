@@ -24,11 +24,12 @@ export const useGroupsDelays = (
   groups: readonly string[],
 ): ReadonlyMap<string, DelaySnapshot> => {
   // Subscribe by group membership; callers rebuild the array on every render.
-  const groupKey = groups.join(' ')
+  // Group names may contain any character, so the key is the JSON-encoded list.
+  const groupKey = JSON.stringify(groups)
 
   const subscribe = useCallback(
     (onSettle: () => void) => {
-      const names = groupKey ? groupKey.split(' ') : []
+      const names: string[] = JSON.parse(groupKey)
       const unsubscribes = names.map((name) =>
         delayManager.addGroupListener(name, onSettle),
       )
