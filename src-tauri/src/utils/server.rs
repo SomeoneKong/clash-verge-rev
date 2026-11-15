@@ -1,6 +1,6 @@
 use super::resolve;
 use crate::{
-    config::{Config, DEFAULT_PAC, MixedPort},
+    config::{Config, DEFAULT_PAC, IVerge, MixedPort},
     core::lightweight,
     process::AsyncHandler,
     utils::{dirs, window_manager::WindowManager},
@@ -10,6 +10,7 @@ use clash_verge_logging::{Type, logging};
 use parking_lot::Mutex;
 use reqwest::ClientBuilder;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -205,10 +206,9 @@ fn start_embedded_server(listener: tokio::net::TcpListener, token: String) {
         }
         let verge_config = Config::verge().await;
         let verge_data = verge_config.data_arc();
-        let pac_content = verge_data.pac_file_content.as_deref().unwrap_or(DEFAULT_PAC);
         // Port changes disable PAC, so the draft port avoids per-request Core queries.
         let pac_port = MixedPort::desired().await;
-        let processed_content = pac_content.replace("%mixed-port%", &format!("{pac_port}"));
+        let processed_content = pac_script(&verge_data, pac_port);
         Ok::<_, warp::Rejection>(
             warp::http::Response::builder()
                 .header("Content-Type", "application/x-ns-proxy-autoconfig")
@@ -246,6 +246,23 @@ fn start_embedded_server(listener: tokio::net::TcpListener, token: String) {
 
 pub fn set_pac_available(available: bool) {
     PAC_AVAILABLE.store(available, Ordering::Release);
+}
+
+/// The PAC script the embedded server serves.
+pub fn pac_script(verge: &IVerge, mixed_port: u16) -> String {
+    verge
+        .pac_file_content
+        .as_deref()
+        .unwrap_or(DEFAULT_PAC)
+        .replace("%mixed-port%", &mixed_port.to_string())
+}
+
+/// The URL to set as the system's PAC. Systems keep a fetched PAC script by its URL, so the URL
+/// carries a digest of the script and changes with it.
+pub fn pac_url(host: &str, server_port: u16, script: &str) -> String {
+    let digest = Sha256::digest(script.as_bytes());
+    let version: String = digest[..8].iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("http://{host}:{server_port}/commands/pac?v={version}")
 }
 
 pub fn set_commands_ready() {
@@ -399,4 +416,20 @@ fn write_instance_record(path: &Path, record: &InstanceRecord) -> Result<()> {
     drop(file);
     std::fs::rename(&temporary, path).context("failed to replace singleton record")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pac_url;
+
+    #[test]
+    fn pac_url_changes_with_the_script_only() {
+        let url = pac_url("127.0.0.1", 33333, "function FindProxyForURL() {}");
+        assert!(url.starts_with("http://127.0.0.1:33333/commands/pac?v="));
+        assert_eq!(url, pac_url("127.0.0.1", 33333, "function FindProxyForURL() {}"));
+        assert_ne!(
+            url,
+            pac_url("127.0.0.1", 33333, "function FindProxyForURL(url, host) {}")
+        );
+    }
 }

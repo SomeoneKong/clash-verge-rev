@@ -346,7 +346,7 @@ fn service_proxy_config(verge: &IVerge, mixed_port: u16, pac_port: u16) -> Resul
     if verge.proxy_auto_config.unwrap_or_default() {
         ensure!(pac_port != 0, "embedded PAC server port must not be zero");
         Ok(MacosProxyConfig::Pac {
-            url: format!("http://{LOOPBACK_HOST}:{pac_port}/commands/pac"),
+            url: server::pac_url(LOOPBACK_HOST, pac_port, &server::pac_script(verge, mixed_port)),
         })
     } else {
         ensure!(mixed_port != 0, "system proxy port must not be zero");
@@ -377,10 +377,10 @@ async fn current_service_proxy_config(verge: &IVerge) -> Result<MacosProxyConfig
     if !verge.enable_system_proxy.unwrap_or_default() {
         return Ok(MacosProxyConfig::Disabled);
     }
-    if verge.proxy_auto_config.unwrap_or_default() {
-        return service_proxy_config(verge, 0, server::embedded_server_port()?);
-    }
     let mixed_port = MixedPort::desired().await;
+    if verge.proxy_auto_config.unwrap_or_default() {
+        return service_proxy_config(verge, mixed_port, server::embedded_server_port()?);
+    }
     service_proxy_config(verge, mixed_port, 0)
 }
 
@@ -986,12 +986,12 @@ mod tests {
             proxy_auto_config: Some(true),
             ..verge
         };
-        assert_eq!(
-            service_proxy_config(&pac_verge, 7897, 3333).unwrap_or_else(|_| unreachable!()),
-            MacosProxyConfig::Pac {
-                url: "http://127.0.0.1:3333/commands/pac".to_owned()
-            }
-        );
+        let MacosProxyConfig::Pac { url } =
+            service_proxy_config(&pac_verge, 7897, 3333).unwrap_or_else(|_| unreachable!())
+        else {
+            unreachable!();
+        };
+        assert!(url.starts_with("http://127.0.0.1:3333/commands/pac?v="));
     }
 
     use super::{FailedOperation, SysproxyFailure, classify_local_failure};
