@@ -109,12 +109,46 @@ pub async fn build_new_window() -> Result<WebviewWindow, String> {
         Ok(window) => {
             logging_error!(Type::Window, window.set_background_color(Some(background_color)));
             restore_default_size_if_needed(&window);
+            #[cfg(target_os = "macos")]
+            show_on_the_active_space(&window);
             // A new page supersedes any reload marker left by the old window.
             #[cfg(target_os = "macos")]
             take_webview_needs_reload();
             Ok(window)
         }
         Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Closing the main window only hides it, and AppKit shows a hidden window again on the Space it
+/// was on, switching the user there; the window is to come to the Space the user is on instead.
+#[cfg(target_os = "macos")]
+fn show_on_the_active_space(window: &WebviewWindow) {
+    use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+
+    let window = window.clone();
+    // NSWindow may only be used on the main thread.
+    let dispatched = handle::Handle::app_handle().run_on_main_thread(move || {
+        let ns_window = match window.ns_window() {
+            Ok(pointer) => pointer.cast::<NSWindow>(),
+            Err(e) => {
+                logging!(warn, Type::Window, "failed to get the native main window: {e}");
+                return;
+            }
+        };
+        // SAFETY: the pointer is the live NSWindow of `window`, used on the main thread.
+        let Some(ns_window) = (unsafe { ns_window.as_ref() }) else {
+            return;
+        };
+        // Exclusive with CanJoinAllSpaces, which the main window does not use.
+        ns_window.setCollectionBehavior(ns_window.collectionBehavior() | NSWindowCollectionBehavior::MoveToActiveSpace);
+    });
+    if let Err(e) = dispatched {
+        logging!(
+            warn,
+            Type::Window,
+            "failed to keep the main window on the active Space: {e}"
+        );
     }
 }
 
