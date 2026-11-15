@@ -34,7 +34,8 @@ fn restore_dns_state_dir(resource_dir: &Path, state_dir: PathBuf) -> PathBuf {
     }
 }
 
-// Without the placeholder, a LAN resolver is reached outside TUN and fake-ip is bypassed.
+// Without the placeholder, a LAN resolver is reached outside TUN and the core's DNS is bypassed,
+// whatever its enhanced mode.
 fn needs_public_dns(config: &Mapping) -> bool {
     let section = |name: &str| config.get(name).and_then(Value::as_mapping);
     let enabled = |name: &str| {
@@ -43,12 +44,7 @@ fn needs_public_dns(config: &Mapping) -> bool {
             .and_then(Value::as_bool)
             .unwrap_or(false)
     };
-    enabled("tun")
-        && enabled("dns")
-        && section("dns")
-            .and_then(|dns| dns.get("enhanced-mode"))
-            .and_then(Value::as_str)
-            == Some("fake-ip")
+    enabled("tun") && enabled("dns")
 }
 
 /// Sets the placeholder DNS while the running config needs it, and restores the system DNS otherwise.
@@ -148,6 +144,24 @@ async fn run_dns_script(script: &Path, dir: PathBuf) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn public_dns_follows_tun_and_dns_in_every_mode() {
+        for mode in ["fake-ip", "redir-host", "normal"] {
+            for (tun, dns) in [(true, true), (true, false), (false, true), (false, false)] {
+                let config: serde_yaml_ng::Mapping = serde_yaml_ng::from_str(&format!(
+                    "tun:\n  enable: {tun}\ndns:\n  enable: {dns}\n  enhanced-mode: {mode}\n"
+                ))
+                .expect("valid config");
+                assert_eq!(
+                    super::needs_public_dns(&config),
+                    tun && dns,
+                    "tun={tun} dns={dns} mode={mode}"
+                );
+            }
+        }
+    }
 
     #[test]
     #[allow(clippy::expect_used)]
