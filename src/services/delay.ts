@@ -30,6 +30,10 @@ const CACHE_TTL = 30 * 60 * 1000
 
 class DelayManager {
   private cache = new Map<string, DelayUpdate>()
+  private profile: string | undefined
+  // Advances whenever cached results are dropped.
+  private epoch = 0
+  private epochListeners = new Set<() => void>()
   private urlMap = new Map<string, string>()
 
   private listenerMap = new Map<string, (update: DelayUpdate) => void>()
@@ -152,6 +156,32 @@ class DelayManager {
     this.groupSnapshots.set(group, snapshot)
     return snapshot
   }
+
+  /** Results belong to the profile they were measured in: the proxies of another profile may
+   * share the group and proxy names. */
+  setProfile(profile: string) {
+    const previous = this.profile
+    this.profile = profile
+    if (previous === undefined || previous === profile) return
+
+    this.cache.clear()
+    this.pendingItemUpdates.clear()
+    this.epoch += 1
+    for (const listener of [...this.epochListeners]) listener()
+    for (const group of this.groupListenerMap.keys()) {
+      this.queueGroupNotification(group)
+    }
+  }
+
+  /** Notifies views to read their delays again after cached results were dropped. */
+  readonly subscribeEpoch = (listener: () => void) => {
+    this.epochListeners.add(listener)
+    return () => {
+      this.epochListeners.delete(listener)
+    }
+  }
+
+  readonly getEpoch = () => this.epoch
 
   setUrl(group: string, url: string) {
     if (!isValidUrl(url)) {
