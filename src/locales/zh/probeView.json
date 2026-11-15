@@ -1,0 +1,68 @@
+{
+  "mode": {
+    "strategy": "策略详细"
+  },
+  "actions": {
+    "refresh": "刷新",
+    "history": "历史"
+  },
+  "member": {
+    "unavailable": "策略信息暂不可用",
+    "expand": "展开详情",
+    "collapse": "收起详情"
+  },
+  "status": {
+    "unsupported": "当前内核不提供策略视图，列表照常显示",
+    "noGroups": "当前配置没有按需探测的组",
+    "stale": "策略视图读取于 {{time}}，已过期：{{error}}",
+    "outdated": "界面版本较旧，部分信息不显示"
+  },
+  "history": {
+    "open": "策略历史",
+    "title": "策略历史",
+    "object": "（{{provider}} · 对象 {{object}}）",
+    "restart": "内核重启",
+    "empty": "这段时间没有可显示的记录",
+    "truncated": "记录较多，只显示最近的部分",
+    "gap": "{{from}} 至 {{to}} 之间缺少 {{count}} 条记录",
+    "restartTail": "此前的内核在最后一次采集后的记录未知",
+    "loadMore": "再显示 {{count}} 条更早的记录",
+    "failed": "查询失败：{{error}}",
+    "restartTailAt": "此前的内核在 {{time}} 最后一次采集，之后的记录未知"
+  },
+  "ranges": {
+    "1h": "1 小时",
+    "6h": "6 小时",
+    "24h": "24 小时",
+    "3d": "3 天",
+    "7d": "7 天"
+  },
+  "filters": {
+    "allGroups": "全部组",
+    "includeGlobal": "包含全局事件",
+    "member": "成员：{{name}}",
+    "allObjects": "同名的全部记录",
+    "allMembers": "全部成员"
+  },
+  "refresh": {
+    "caughtUp": "已采集到内核当时的最新记录（#{{seq}}）",
+    "partial": "部分完成，还剩 {{count}} 条待采集",
+    "unsupported": "当前内核不提供决策记录",
+    "unreachable": "内核没有响应",
+    "failed": "刷新失败：{{error}}",
+    "changed": "采集期间内核重启或记录已溢出，下一次采集会接着处理",
+    "busy": "另一次采集正在进行，请稍后再试"
+  },
+  "coverage": {
+    "observed": "内核 {{instance}} 最后一次成功采集：{{time}}",
+    "pending": "内核 {{instance}} 还有 {{count}} 条记录待采集，这段时间的变化可能未显示",
+    "gap": "内核 {{instance}} 在 {{from}} 至 {{to}} 之间有记录缺失",
+    "gapUnknown": "内核 {{instance}} 有记录缺失，时间不详",
+    "tail": "内核 {{instance}} 最后一次采集之后的记录未知",
+    "unknown": "内核 {{instance}} 的记录是否完整无法确定",
+    "noDisplay": "内核 {{instance}} 不提供显示信息（旧内核），这段时间的变化不显示",
+    "displayUnknown": "无法确定内核 {{instance}} 是否提供显示信息",
+    "lost": "内核 {{instance}} 已结束，有 {{count}} 条记录未保存，已无法补采",
+    "tailAt": "内核 {{instance}} 在 {{time}} 最后一次采集，之后的记录未知"
+  }
+}

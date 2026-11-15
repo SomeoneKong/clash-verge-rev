@@ -217,6 +217,15 @@ export const commands = {
     __TAURI_INVOKE<UsageReport_Serialize>('get_proxy_usage', { request }),
   exportProxyUsage: (path: string) =>
     __TAURI_INVOKE<null>('export_proxy_usage', { path }),
+  getProbeView: () => __TAURI_INVOKE<ProbeView>('get_probe_view'),
+  /**
+   *  The events of the timeline a query asks for, with the coverage of each core; the page is
+   *  passed on as JSON.
+   */
+  queryProbeHistory: (query: HistoryQuery) =>
+    __TAURI_INVOKE<JsonValueOf>('query_probe_history', { query }),
+  refreshProbeHistory: () =>
+    __TAURI_INVOKE<ProbeRefresh>('refresh_probe_history'),
   getProfileLoginNodes: () =>
     __TAURI_INVOKE<LoginProfile[]>('get_profile_login_nodes'),
   getNodeLogins: (profiles: LoginProfile[]) =>
@@ -329,6 +338,27 @@ export type FailedOperation =
   | 'systemProxyDisable'
   | 'systemProxyRestore'
   | 'systemProxyGuard'
+
+/**
+ *  What a history of the timeline asks for: events with a `display` within `[since, until]`
+ *  (Unix seconds), of some groups, members and categories.
+ */
+export type HistoryQuery = {
+  since: number
+  until: number
+  /**  Events tied to any of these groups; those tied to any group when absent. */
+  groups?: string[] | null
+  /**  The events of global scope, whatever the groups and the member. */
+  includeGlobal?: boolean
+  /**
+   *  Events involving a member of this name, or with `instance` and `object` only that
+   *  object.
+   */
+  member?: string | null
+  instance?: string | null
+  object?: number | null
+  categories?: string[] | null
+}
 
 /**  Define the `profiles.yaml` schema */
 export type IProfiles = IProfiles_Serialize | IProfiles_Deserialize
@@ -570,6 +600,9 @@ export type JsonValue =
   | string
   | JsonValue[]
   | { [key in string]: JsonValue }
+
+/**  A JSON value handed to the frontend as it is. */
+export type JsonValueOf = JsonValue
 
 export type ListenerProbe = {
   address: string
@@ -818,6 +851,35 @@ export type PrfOption_Serialize = {
 export type PrfSelected = {
   name?: string | null
   now?: string | null
+}
+
+/**  What a collection of the decision records came to. */
+export type ProbeRefresh = {
+  /**
+   *  `caughtUp` when every event the core had when asked is saved, `partial` when the
+   *  budget ran out first or damage found meanwhile is to be read again, `changed` when the
+   *  core restarted or dropped events meanwhile,
+   *  `busy` when another collection took the budget, `unsupported` for a core without
+   *  records, `unreachable` when no core answered in time.
+   */
+  status: string
+  instance: string | null
+  /**  The latest event the core had when asked, and the events saved up to it. */
+  observedLatest: number | null
+  savedTo: number | null
+  /**
+   *  Events still to be read up to `observed_latest`, those read again for a damaged day
+   *  file included.
+   */
+  remaining: number | null
+}
+
+/**  The view of the probe strategy, passed on as the core made it. */
+export type ProbeView = {
+  /**  `ok`, `unsupported` for a core without the view, or `unreachable`. */
+  status: string
+  view: JsonValue | null
+  error: string | null
 }
 
 export type ProfileCreate = ProfileCreate_Serialize | ProfileCreate_Deserialize
