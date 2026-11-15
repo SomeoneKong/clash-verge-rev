@@ -34,14 +34,19 @@ pub(super) async fn use_script(script: String, config: Mapping, name: String) ->
         Err(err) => return (config, vec![], vec![("exception".into(), err.to_string().into())]),
     };
 
-    let evaluated = AsyncHandler::spawn_blocking(move || eval_script(&script, &json, &name));
-    let (outcome, mut logs) = match tokio::time::timeout(SCRIPT_TIMEOUT, evaluated).await {
+    let mut evaluated = AsyncHandler::spawn_blocking(move || eval_script(&script, &json, &name));
+    let (outcome, mut logs) = match tokio::time::timeout(SCRIPT_TIMEOUT, &mut evaluated).await {
         Ok(Ok(evaluated)) => evaluated,
         Ok(Err(join_err)) => (Err(format!("script task panicked: {join_err}")), vec![]),
-        Err(_elapsed) => (
-            Err(format!("script execution timed out after {SCRIPT_TIMEOUT:?}")),
-            vec![],
-        ),
+        Err(_elapsed) => {
+            // The blocking pool is small: a script still waiting for a thread must not take one
+            // for a result that is no longer used. One already running cannot be stopped.
+            evaluated.abort();
+            (
+                Err(format!("script execution timed out after {SCRIPT_TIMEOUT:?}")),
+                vec![],
+            )
+        }
     };
 
     match outcome {
