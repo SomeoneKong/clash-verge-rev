@@ -40,7 +40,8 @@ pub(crate) async fn collect_runtime_bundle(config_file: &Path, core_path: &Path)
         .ok_or_else(|| anyhow::anyhow!("runtime config has no parent directory"))?;
     let parts = collect_runtime_parts(config, config_root)?;
     Ok(RuntimeBundle {
-        yaml: serde_yaml_ng::to_string(&parts.config).context("failed to serialize service runtime config")?,
+        yaml: crate::utils::yaml_emitter::to_core_config_string(&parts.config)
+            .context("failed to serialize service runtime config")?,
         assets: parts.assets,
         remote_providers: parts
             .remote_providers
