@@ -127,12 +127,13 @@ class DelayManager {
     this.scheduleGroupFlush()
   }
 
-  /** Cached set snapshot for `useSyncExternalStore` identity comparisons. */
+  /** Cached set snapshot for `useSyncExternalStore` identity comparisons; `groupKey` is the
+   * JSON-encoded list of group names. */
   groupsDelays(groupKey: string): ReadonlyMap<string, DelaySnapshot> {
     const cached = this.groupSetSnapshots.get(groupKey)
     if (cached) return cached
 
-    const names = groupKey ? groupKey.split(' ') : []
+    const names: string[] = JSON.parse(groupKey)
     const snapshots = new Map(
       names.map((name) => [name, this.groupDelays(name)]),
     )
