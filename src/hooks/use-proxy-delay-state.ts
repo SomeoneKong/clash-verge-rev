@@ -1,5 +1,5 @@
 import { useLockFn } from 'ahooks'
-import { useCallback, useEffect, useReducer } from 'react'
+import { useCallback, useEffect, useReducer, useSyncExternalStore } from 'react'
 
 import { useVerge } from '@/hooks/use-verge'
 import delayManager, { type DelayUpdate } from '@/services/delay'
@@ -40,6 +40,10 @@ export function useProxyDelayState(
   const [delayState, setDelayState] = useReducer(identity, INITIAL_DELAY)
   const { verge } = useVerge()
   const timeout = verge?.default_latency_timeout || 10000
+  const delayEpoch = useSyncExternalStore(
+    delayManager.subscribeEpoch,
+    delayManager.getEpoch,
+  )
 
   useEffect(() => {
     if (isPreset) return
@@ -79,9 +83,10 @@ export function useProxyDelayState(
     setDelayState({ delay: fallbackDelay, updatedAt })
   }, [details?.history, groupName, member, name, unresolved])
 
+  // Read again when the delay store drops its results, e.g. on a profile switch.
   useEffect(() => {
     updateDelay()
-  }, [updateDelay])
+  }, [updateDelay, delayEpoch])
 
   const onDelay = useLockFn(async () => {
     if (!isInteractableMember(member)) return
