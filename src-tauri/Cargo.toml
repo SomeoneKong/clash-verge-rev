@@ -99,7 +99,7 @@ backon = { version = "1.6.0", features = ["tokio-sleep"] }
 tauri-plugin-http = "2.8.3"
 tracing = { workspace = true }
 tauri-plugin-devtools = { version = "2.2.2", optional = true }
-tauri-plugin-mihomo = { git = "https://github.com/SomeoneKong/tauri-plugin-mihomo", rev = "39ec5ed0214fef60be4abf5d5a3c859022c2f95d" }
+tauri-plugin-mihomo = { git = "https://github.com/SomeoneKong/tauri-plugin-mihomo", rev = "6754a1e2f547a403bdac8fa18dc61305fa32574a" }
 async-trait = "0.1.92"
 clash_verge_service_ipc = { git = "https://github.com/clash-verge-rev/clash-verge-service-ipc.git", tag = "v2.7.7", version = "2.7.7", features = [
   "client",

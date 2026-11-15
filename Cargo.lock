@@ -7501,7 +7501,7 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-mihomo"
 version = "0.6.0"
-source = "git+https://github.com/SomeoneKong/tauri-plugin-mihomo?rev=39ec5ed0214fef60be4abf5d5a3c859022c2f95d#39ec5ed0214fef60be4abf5d5a3c859022c2f95d"
+source = "git+https://github.com/SomeoneKong/tauri-plugin-mihomo?rev=6754a1e2f547a403bdac8fa18dc61305fa32574a#6754a1e2f547a403bdac8fa18dc61305fa32574a"
 dependencies = [
  "arc-swap",
  "clashmap",
