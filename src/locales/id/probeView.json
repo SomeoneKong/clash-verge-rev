@@ -1,0 +1,66 @@
+{
+  "mode": {
+    "strategy": "Strategy"
+  },
+  "actions": {
+    "refresh": "Refresh",
+    "history": "History"
+  },
+  "member": {
+    "unavailable": "Strategy details unavailable"
+  },
+  "status": {
+    "unsupported": "The core does not provide a strategy view; the list shows as usual",
+    "noGroups": "The config has no group probed on demand",
+    "stale": "The strategy view was read at {{time}} and is out of date: {{error}}",
+    "outdated": "This app is older than the core: some details are not shown"
+  },
+  "history": {
+    "open": "Strategy history",
+    "title": "Strategy history",
+    "object": "({{provider}} · object {{object}})",
+    "restart": "The core restarted",
+    "empty": "Nothing to show in this period",
+    "truncated": "Too many records: only the latest are shown",
+    "gap": "{{count}} records missing between {{from}} and {{to}}",
+    "restartTail": "what the core before recorded after its last collection is unknown",
+    "loadMore": "Show {{count}} earlier records",
+    "failed": "Query failed: {{error}}",
+    "restartTailAt": "the core before was last collected at {{time}}; what it recorded after is unknown"
+  },
+  "ranges": {
+    "1h": "1 hour",
+    "6h": "6 hours",
+    "24h": "24 hours",
+    "3d": "3 days",
+    "7d": "7 days"
+  },
+  "filters": {
+    "allGroups": "All groups",
+    "includeGlobal": "Global events",
+    "member": "Member: {{name}}",
+    "allObjects": "All of this name",
+    "allMembers": "All members"
+  },
+  "refresh": {
+    "caughtUp": "Collected up to the latest record the core had (#{{seq}})",
+    "partial": "Partly collected, {{count}} records left",
+    "unsupported": "The core keeps no decision records",
+    "unreachable": "The core did not answer",
+    "failed": "Refresh failed: {{error}}",
+    "changed": "The core restarted or dropped records meanwhile; the next collection goes on from there",
+    "busy": "Another collection is running; try again shortly"
+  },
+  "coverage": {
+    "observed": "Core {{instance}} last collected: {{time}}",
+    "pending": "Core {{instance}} has {{count}} records not collected yet: recent changes may be missing",
+    "gap": "Core {{instance}} lacks records between {{from}} and {{to}}",
+    "gapUnknown": "Core {{instance}} lacks some records, time unknown",
+    "tail": "What core {{instance}} recorded after its last collection is unknown",
+    "unknown": "Whether the records of core {{instance}} are complete is unknown",
+    "noDisplay": "Core {{instance}} provides no display (an older core): its changes are not shown",
+    "displayUnknown": "Whether core {{instance}} provides a display is unknown",
+    "lost": "Core {{instance}} ended with {{count}} records not saved; they can no longer be collected",
+    "tailAt": "Core {{instance}} was last collected at {{time}}; what it recorded after is unknown"
+  }
+}

@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef } from 'react'
 
 import { useRuntimeConfig } from '@/hooks/use-clash'
 import { useGroupsDelays } from '@/hooks/use-group-delays'
+import { useProbeView } from '@/hooks/use-probe-view'
 import { useVerge } from '@/hooks/use-verge'
 import { useAppRefreshers, useProxiesData } from '@/providers/app-data-context'
 import delayManager, { type DelaySnapshot } from '@/services/delay'
+import type { ProbeViewGroup, ProbeViewMember } from '@/types/probe-view'
 import {
   isInteractableMember,
+  providerNameOf,
   resolveMember,
   selectGlobalChainNodes,
   selectRuleChainMembers,
@@ -32,8 +35,11 @@ export interface ResolvedMemberOccurrence {
 type ProxyGroup = ProxyGroupView
 
 export interface IRenderItem {
-  type: 0 | 1 | 2 | 3 | 4
+  // 5 and 6 are the strategy of an on-demand group and of a member, in the strategy mode
+  type: 0 | 1 | 2 | 3 | 4 | 5 | 6
   key: string
+  strategyGroup?: ProbeViewGroup
+  strategyMember?: ProbeViewMember | null
   group: ProxyGroup
   member?: ResolvedMemberOccurrence
   memberCol?: ResolvedMemberOccurrence[]
@@ -67,6 +73,7 @@ type GroupCache = {
   /// This group's own delays. Compared by identity so that a test settling in one group
   /// does not throw away every other group's sorted order.
   delays: DelaySnapshot | undefined
+  strategy: ProbeViewGroup | undefined
   items: IRenderItem[]
 }
 
@@ -87,6 +94,53 @@ const memberKey = (
     member.kind === 'node' ? member.node.recordId : member.ref.name
   return `${group.name}:${memberIndex}:${identity}`
 }
+
+const membersByIndex = new WeakMap<
+  ProbeViewGroup,
+  Map<number, ProbeViewMember>
+>()
+
+/**
+ * The strategy of a member, matched by its place among the members of the group and checked
+ * by its name and provider: a group may hold members of the same name from several providers,
+ * and a member not of a provider has none. `null` when the view and the proxies come from
+ * different configs, or the member is not resolved.
+ */
+const strategyMemberOf = (
+  strategy: ProbeViewGroup,
+  occurrence: ResolvedMemberOccurrence,
+): ProbeViewMember | null => {
+  let byIndex = membersByIndex.get(strategy)
+  if (!byIndex) {
+    byIndex = new Map(strategy.members.map((member) => [member.index, member]))
+    membersByIndex.set(strategy, byIndex)
+  }
+  const found = byIndex.get(occurrence.memberIndex)
+  const { member } = occurrence
+  if (!found || member.kind === 'unresolved') return null
+  if (found.name !== member.ref.name) return null
+  const provider =
+    member.kind === 'node' ? (providerNameOf(member.node) ?? '') : ''
+  return provider === found.provider ? found : null
+}
+
+/** The members in the effective order of the strategy with their strategy; those it does not
+ * match come last. */
+const strategyOrder = (
+  occurrences: ResolvedMemberOccurrence[],
+  strategy: ProbeViewGroup,
+) =>
+  occurrences
+    .map((occurrence) => ({
+      occurrence,
+      strategy: strategyMemberOf(strategy, occurrence),
+    }))
+    .sort(
+      (a, b) =>
+        (a.strategy?.position ?? Number.MAX_SAFE_INTEGER) -
+          (b.strategy?.position ?? Number.MAX_SAFE_INTEGER) ||
+        a.occurrence.memberIndex - b.occurrence.memberIndex,
+    )
 
 const calculateColumns = (width: number, configCol: number): number => {
   if (configCol > 0 && configCol < 6) return configCol
@@ -126,6 +180,11 @@ export const useRenderList = (
 ) => {
   const { proxyView } = useProxiesData()
   const { refreshProxy } = useAppRefreshers()
+  const { groups: strategyGroups, refresh: refreshStrategy } = useProbeView()
+  // a config or provider change moves the members: read the strategy again with them
+  useEffect(() => {
+    refreshStrategy()
+  }, [proxyView, refreshStrategy])
   const { verge } = useVerge()
   const { width } = useWindowWidth()
   const [headStates, setHeadState] = useHeadStateNew()
@@ -266,6 +325,7 @@ export const useRenderList = (
     const retList = renderGroups.flatMap((group) => {
       const headState = headStates[group.name] || DEFAULT_STATE
       const cached = cache.get(group.name)
+      const strategy = strategyGroups?.get(group.name)
       if (
         cached &&
         cached.now === group.now &&
@@ -273,7 +333,8 @@ export const useRenderList = (
         cached.headState === headState &&
         cached.col === col &&
         cached.latencyTimeout === latencyTimeout &&
-        cached.delays === groupDelays.get(group.name)
+        cached.delays === groupDelays.get(group.name) &&
+        cached.strategy === strategy
       ) {
         return cached.items
       }
@@ -289,12 +350,23 @@ export const useRenderList = (
         },
       ]
 
+      if (strategy && (headState.open || !useRule)) {
+        ret.push({
+          type: 5,
+          key: `strategy-${group.name}`,
+          group,
+          headState,
+          strategyGroup: strategy,
+        })
+      }
+
       if (headState.open || !useRule) {
-        const occurrences = filterSort(
+        const sorted = filterSort(
           resolveOccurrences(proxyView, group),
           group.name,
           headState.filterText,
-          headState.sortType,
+          // the strategy puts the members in its own order
+          strategy ? 0 : headState.sortType,
           latencyTimeout!,
           {
             matchCase: headState.filterMatchCase,
@@ -302,11 +374,29 @@ export const useRenderList = (
             useRegularExpression: headState.filterUseRegularExpression,
           },
         )
+        const ordered = strategy ? strategyOrder(sorted, strategy) : null
+        const occurrences = ordered
+          ? ordered.map((entry) => entry.occurrence)
+          : sorted
         if (!useRule) {
           ret.push({ type: 1, key: `head-${group.name}`, group, headState })
         }
         if (occurrences.length === 0) {
           ret.push({ type: 3, key: `empty-${group.name}`, group, headState })
+        } else if (ordered) {
+          // one column, each member with its strategy under it
+          for (const { occurrence: member, strategy: matched } of ordered) {
+            const key = memberKey(group, member)
+            ret.push({ type: 2, key, group, member, headState })
+            ret.push({
+              type: 6,
+              key: `strategy-${key}`,
+              group,
+              member,
+              headState,
+              strategyMember: matched,
+            })
+          }
         } else if (col > 1) {
           ret.push(
             ...groupOccurrences(occurrences, col).map((memberCol) => ({
@@ -338,6 +428,7 @@ export const useRenderList = (
         col,
         latencyTimeout: latencyTimeout!,
         delays: groupDelays.get(group.name),
+        strategy,
         items: ret,
       })
       return ret
@@ -365,6 +456,7 @@ export const useRenderList = (
     proxyView,
     renderGroups,
     selectedGroup,
+    strategyGroups,
   ])
 
   return {

@@ -1,16 +1,33 @@
-import { LanOutlined, LanRounded, WarningRounded } from '@mui/icons-material'
-import { Box, Button, ButtonGroup, Typography } from '@mui/material'
+import {
+  HistoryRounded,
+  InsightsRounded,
+  LanOutlined,
+  LanRounded,
+  WarningRounded,
+} from '@mui/icons-material'
+import {
+  Box,
+  Button,
+  ButtonGroup,
+  IconButton,
+  Tooltip,
+  Typography,
+} from '@mui/material'
 import { useLockFn } from 'ahooks'
 import { useCallback, useEffect, useReducer, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BaseDialog, BasePage, TooltipIcon } from '@/components/base'
+import { ProbeViewBanner } from '@/components/proxy/probe-elements'
+import { ProbeHistoryDialog } from '@/components/proxy/probe-history'
 import { ProviderButton } from '@/components/proxy/provider-button'
 import { ProxyGroups } from '@/components/proxy/proxy-groups'
+import { useProbeView } from '@/hooks/use-probe-view'
 import {
   useAppRefreshers,
   useClashConfigData,
 } from '@/providers/app-data-context'
+import { ProbeViewProvider } from '@/providers/probe-view-provider'
 import {
   getRuntimeProxyChainConfig,
   patchClashMode,
@@ -26,7 +43,44 @@ const MODE_SET = new Set<string>(MODES)
 const isMode = (value: unknown): value is Mode =>
   typeof value === 'string' && MODE_SET.has(value)
 
-const ProxyPage = () => {
+// The strategy mode and the strategy history of the on-demand groups.
+// Icons with their names on hover: the header has little room on a narrow window.
+const StrategyButtons = () => {
+  const { t } = useTranslation()
+  const { enabled, setEnabled, openHistory } = useProbeView()
+  return (
+    <>
+      <Tooltip title={t('probeView.mode.strategy')} arrow>
+        <IconButton
+          size="small"
+          color={enabled ? 'primary' : 'default'}
+          aria-pressed={enabled}
+          aria-label={t('probeView.mode.strategy')}
+          onClick={() => setEnabled(!enabled)}
+        >
+          <InsightsRounded fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Tooltip title={t('probeView.history.open')} arrow>
+        <IconButton
+          size="small"
+          aria-label={t('probeView.history.open')}
+          onClick={() => openHistory()}
+        >
+          <HistoryRounded fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    </>
+  )
+}
+
+const ProxyPage = () => (
+  <ProbeViewProvider>
+    <ProxyPageContent />
+  </ProbeViewProvider>
+)
+
+const ProxyPageContent = () => {
   const { t } = useTranslation()
 
   // 从 localStorage 恢复链式代理按钮状态
@@ -198,15 +252,23 @@ const ProxyPage = () => {
           >
             {t('proxies.page.actions.toggleChain')}
           </Button>
+
+          <StrategyButtons />
         </Box>
       }
     >
-      <ProxyGroups
-        mode={curMode ?? 'rule'}
-        isChainMode={isChainMode}
-        chainConfigData={chainConfigData}
-        onExitChainMode={onExitChainMode}
-      />
+      <ProbeHistoryDialog />
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <ProbeViewBanner />
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <ProxyGroups
+            mode={curMode ?? 'rule'}
+            isChainMode={isChainMode}
+            chainConfigData={chainConfigData}
+            onExitChainMode={onExitChainMode}
+          />
+        </Box>
+      </Box>
       <BaseDialog
         open={chainConfirmOpen}
         title={t('proxies.page.actions.toggleChain')}

@@ -21,6 +21,11 @@ import { useVerge } from '@/hooks/use-verge'
 import { useThemeMode } from '@/services/states'
 import type { ResolvedProxyMember } from '@/types/proxy-view'
 
+import {
+  GroupStrategy,
+  GroupStrategyLine,
+  MemberStrategy,
+} from './probe-elements'
 import { ProxyGroupHeaderBlock } from './proxy-group-header-block'
 import { ProxyGroupTools } from './proxy-group-tools'
 import { ProxyHead } from './proxy-head'
@@ -144,6 +149,7 @@ export const ProxyRender = memo(function ProxyRender(props: RenderProps) {
                   {group.now}
                 </StyledSubtitle>
               </Box>
+              <GroupStrategyLine name={group.name} />
             </Box>
           }
           slotProps={{
@@ -288,6 +294,14 @@ export const ProxyRender = memo(function ProxyRender(props: RenderProps) {
         </Typography>
       </Box>
     )
+  }
+
+  if (type === 5 && item.strategyGroup) {
+    return <GroupStrategy group={item.strategyGroup} />
+  }
+
+  if (type === 6) {
+    return <MemberStrategy member={item.strategyMember ?? null} />
   }
 
   if (type === 4) {

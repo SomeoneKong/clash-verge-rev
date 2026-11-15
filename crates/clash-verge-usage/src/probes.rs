@@ -9,7 +9,8 @@
 //! What is on disk for an instance is the union of the day indexes; its gaps never overlap it.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    cmp::{Ordering, Reverse},
+    collections::{BTreeMap, BTreeSet, BinaryHeap},
     io::{BufRead as _, BufReader, Seek as _, SeekFrom, Write as _},
     path::{Path, PathBuf},
 };
@@ -88,6 +89,12 @@ pub struct ProbeInstance {
     /// only in the day files.
     #[serde(default)]
     pub seen: u64,
+    /// When a collection last got an answer from the core, an empty one too, and the latest
+    /// event the core had then; empty and 0 when not known.
+    #[serde(default)]
+    pub observed_at: String,
+    #[serde(default)]
+    pub observed_latest: u64,
 }
 
 /// What one day file holds.
@@ -459,6 +466,15 @@ impl ProbeStore {
         }
     }
 
+    /// Records that a collection got an answer from an instance at `at`, when the core had
+    /// events up to `latest`.
+    pub fn observe(&mut self, instance: &str, latest: u64, at: &str) -> Result<()> {
+        let entry = self.instance_entry(instance);
+        entry.observed_at = at.to_owned();
+        entry.observed_latest = latest;
+        self.save_meta()
+    }
+
     /// Takes note of an instance a collection reads from, with the time the core started and
     /// the oldest event it keeps, and returns what to read. Events the core dropped before
     /// they were collected become a gap.
@@ -685,6 +701,228 @@ impl ProbeStore {
         Ok(())
     }
 
+    /// The events with a `display` a query asks for, with what is known of how complete the
+    /// events of each instance within it are.
+    pub fn history(&mut self, query: &HistoryQuery) -> Result<HistoryPage> {
+        self.repair()?;
+        let (page, damaged) = self.read_history(query)?;
+        if damaged.is_empty() {
+            return Ok(page);
+        }
+        // lines changed in place, which the length of a file does not tell: what is left of
+        // them is a corrupt gap
+        for name in &damaged {
+            self.verify_day(name)?;
+        }
+        self.save_meta()?;
+        let (page, damaged) = self.read_history(query)?;
+        if !damaged.is_empty() {
+            bail!("the decision records of {} cannot be read", damaged.join(", "));
+        }
+        Ok(page)
+    }
+
+    /// The page of a history, with the days found to hold unreadable lines.
+    fn read_history(&self, query: &HistoryQuery) -> Result<(HistoryPage, Vec<String>)> {
+        let first = day_of(query.since.div_euclid(3600), self.day_offset) - 1;
+        let last = day_of(query.until.div_euclid(3600), self.day_offset) + 1;
+        let mut events: BinaryHeap<Reverse<Newest>> = BinaryHeap::new();
+        let mut matched = 0usize;
+        let mut groups = BTreeSet::new();
+        let mut members = BTreeSet::new();
+        let mut categories = BTreeSet::new();
+        // per instance: the latest event read, that the cursor is at, and the events next to
+        // each gap
+        let mut latest: BTreeMap<String, (u64, String)> = BTreeMap::new();
+        let mut saved: BTreeMap<String, String> = BTreeMap::new();
+        let mut damaged = Vec::new();
+        // per instance, the lowest and highest events read between each two of its gaps
+        let mut between: BTreeMap<String, Vec<(Neighbour, Neighbour)>> = BTreeMap::new();
+        let names: Vec<String> = self
+            .meta
+            .days
+            .keys()
+            .filter(|name| parse_day_name(name).is_some_and(|day| day >= first && day <= last))
+            .cloned()
+            .collect();
+        for name in names {
+            let path = self.day_path(&name);
+            if !path.exists() {
+                continue;
+            }
+            let gaps = &self.meta.instances;
+            let mut unreadable = false;
+            let end = for_each_line(&path, 0, |line| {
+                let event = serde_json::from_slice::<Value>(line).ok();
+                let (Some(instance), Some(seq)) = (
+                    event.as_ref().and_then(|e| e.get("instance")).and_then(Value::as_str),
+                    event.as_ref().and_then(|e| e.get("seq")).and_then(Value::as_u64),
+                ) else {
+                    unreadable = true;
+                    return Ok(());
+                };
+                let event = event.as_ref().unwrap_or(&Value::Null);
+                let Some(time) = event.get("time").and_then(Value::as_str) else {
+                    return Ok(());
+                };
+                let entry = latest.entry(instance.to_owned()).or_insert((0, String::new()));
+                if seq >= entry.0 {
+                    *entry = (seq, time.to_owned());
+                }
+                if let Some(known) = gaps.get(instance) {
+                    if seq == known.cursor {
+                        saved.insert(instance.to_owned(), time.to_owned());
+                    }
+                    let k = known.gaps.partition_point(|gap| gap.to < seq);
+                    if !known.gaps.is_empty() && known.gaps.get(k).is_none_or(|gap| seq < gap.from) {
+                        if !between.contains_key(instance) {
+                            between.insert(instance.to_owned(), vec![(None, None); known.gaps.len() + 1]);
+                        }
+                        if let Some((lowest, highest)) = between.get_mut(instance).and_then(|slots| slots.get_mut(k)) {
+                            if lowest.as_ref().is_none_or(|(s, _)| seq < *s) {
+                                *lowest = Some((seq, time.to_owned()));
+                            }
+                            if highest.as_ref().is_none_or(|(s, _)| seq > *s) {
+                                *highest = Some((seq, time.to_owned()));
+                            }
+                        }
+                    }
+                }
+                let Some(display) = event.get("display") else {
+                    return Ok(());
+                };
+                let Some(at) = event_time(event) else {
+                    return Ok(());
+                };
+                if at < query.since || at > query.until {
+                    return Ok(());
+                }
+                if let Some(list) = display
+                    .get("scope")
+                    .and_then(|scope| scope.get("groups"))
+                    .and_then(Value::as_array)
+                {
+                    groups.extend(list.iter().filter_map(Value::as_str).map(str::to_owned));
+                }
+                if let Some(list) = display.get("members").and_then(Value::as_array) {
+                    members.extend(
+                        list.iter()
+                            .filter_map(|m| m.get("name").and_then(Value::as_str))
+                            .map(str::to_owned),
+                    );
+                }
+                if let Some(category) = display.get("category").and_then(Value::as_str) {
+                    categories.insert(category.to_owned());
+                }
+                if display_matches(display, instance, query) {
+                    matched += 1;
+                    // only the newest are kept, so that a long range takes no more memory
+                    let older = events.len() == HISTORY_LIMIT
+                        && events
+                            .peek()
+                            .is_some_and(|Reverse(oldest)| oldest.key() >= (at, seq, instance));
+                    if !older {
+                        events.push(Reverse(Newest {
+                            at,
+                            event: HistoryEvent {
+                                time: time.to_owned(),
+                                instance: instance.to_owned(),
+                                seq,
+                                display: display.clone(),
+                            },
+                        }));
+                        if events.len() > HISTORY_LIMIT {
+                            events.pop();
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+            // a line cut short within what is saved: its end changed in place
+            if unreadable || self.meta.days.get(&name).is_some_and(|index| end < index.committed) {
+                damaged.push(name);
+            }
+        }
+        let truncated = matched > HISTORY_LIMIT;
+        let mut events: Vec<Newest> = events.into_iter().map(|Reverse(newest)| newest).collect();
+        events.sort();
+        let mut instances = Vec::new();
+        for (instance, entry) in &self.meta.instances {
+            let started = parse_time(&entry.started_at);
+            let active = [
+                entry.observed_at.as_str(),
+                latest.get(instance).map_or("", |(_, time)| time.as_str()),
+            ]
+            .iter()
+            .filter_map(|time| parse_time(time))
+            .max();
+            let overlaps = started.is_none_or(|started| started <= query.until)
+                && (!entry.ended || active.is_none_or(|active| active >= query.since));
+            if !overlaps {
+                continue;
+            }
+            let slots = between.remove(instance).unwrap_or_default();
+            let gaps = entry
+                .gaps
+                .iter()
+                .enumerate()
+                .map(|(i, gap)| {
+                    // the nearest events read on either side, however many gaps lie between
+                    let after = slots[..(i + 1).min(slots.len())]
+                        .iter()
+                        .rev()
+                        .find_map(|(_, highest)| highest.clone());
+                    let before = slots.iter().skip(i + 1).find_map(|(lowest, _)| lowest.clone());
+                    HistoryGap {
+                        from: gap.from,
+                        to: gap.to,
+                        reason: gap.reason,
+                        after_time: after.map(|(_, time)| time),
+                        before_time: before.map(|(_, time)| time),
+                    }
+                })
+                // a gap known to lie wholly outside the range is not of it
+                .filter(|gap| {
+                    let after = gap.after_time.as_deref().and_then(parse_time);
+                    let before = gap.before_time.as_deref().and_then(parse_time);
+                    !(before.is_some_and(|before| before < query.since)
+                        || after.is_some_and(|after| after > query.until))
+                })
+                .collect();
+            let display = self
+                .load_contexts(instance)?
+                .params
+                .map(|params| params.get("display").and_then(Value::as_u64).is_some());
+            let observed = !entry.observed_at.is_empty();
+            instances.push(InstanceCoverage {
+                instance: instance.clone(),
+                started_at: entry.started_at.clone(),
+                saved_to: entry.cursor,
+                saved_time: saved.remove(instance),
+                observed_at: observed.then(|| entry.observed_at.clone()),
+                observed_latest: observed.then_some(entry.observed_latest),
+                pending: observed.then(|| entry.observed_latest.saturating_sub(entry.cursor)),
+                gaps,
+                coverage_unknown: entry.coverage_unknown || (entry.ended && !entry.gaps.is_empty()),
+                // no core tells its last event: what it recorded after the last collection is
+                // unknown, however it ended
+                tail_unknown: entry.ended,
+                ended: entry.ended,
+                display,
+            });
+        }
+        let page = HistoryPage {
+            events: events.into_iter().map(|newest| newest.event).collect(),
+            truncated,
+            groups: groups.into_iter().collect(),
+            members: members.into_iter().collect(),
+            categories: categories.into_iter().collect(),
+            instances,
+            retained_since: self.meta.retained_since.clone(),
+        };
+        Ok((page, damaged))
+    }
+
     /// Deletes the days older than the retention, and the contexts no kept event refers to.
     /// The new start of the retention is saved before any file is deleted, so that a deletion
     /// cut short is finished rather than taken for a loss.
@@ -695,7 +933,7 @@ impl ProbeStore {
                 self.day_names()?.iter().any(|name| *name < first) || self.meta.days.keys().any(|name| *name < first);
             if expires {
                 // files are deleted only by a start of the retention that is on disk
-                let previous = self.meta.retained_since.replace(first);
+                let previous = self.meta.retained_since.replace(first.clone());
                 if let Err(error) = self.save_meta() {
                     self.meta.retained_since = previous;
                     return Err(error);
@@ -704,11 +942,17 @@ impl ProbeStore {
         }
         self.repair()?;
         self.save_meta()?;
-        self.drop_unreferenced_contexts()
+        self.drop_unreferenced_contexts(&first)
+    }
+
+    /// Whether an instance was last observed on a day from `first` on.
+    fn observed_since(&self, entry: &ProbeInstance, first: &str) -> bool {
+        parse_time(&entry.observed_at)
+            .is_some_and(|at| day_name(day_of(at.div_euclid(3600), self.day_offset)).as_str() >= first)
     }
 
     /// Contexts are deleted only once no day index refers to them, not by their age.
-    fn drop_unreferenced_contexts(&mut self) -> Result<()> {
+    fn drop_unreferenced_contexts(&mut self, first: &str) -> Result<()> {
         let mut referenced: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for index in self.meta.days.values() {
             for (instance, keys) in &index.contexts {
@@ -726,10 +970,13 @@ impl ProbeStore {
             let Some(instance) = name.to_str().and_then(|name| name.strip_suffix(".json")) else {
                 continue;
             };
-            let ended = self.meta.instances.get(instance).is_none_or(|entry| entry.ended);
+            let entry = self.meta.instances.get(instance);
+            let ended = entry.is_none_or(|entry| entry.ended);
+            let observed = entry.is_some_and(|entry| self.observed_since(entry, first));
             match referenced.get(instance) {
-                // the contexts of a core still running are kept for the events to come
-                None if ended => files::remove(&self.contexts_path(instance)?)?,
+                // the contexts of a core still running are kept for the events to come, the
+                // params of one observed lately for its coverage
+                None if ended && !observed => files::remove(&self.contexts_path(instance)?)?,
                 keys => {
                     let none = BTreeSet::new();
                     let keys = keys.unwrap_or(&none);
@@ -750,7 +997,11 @@ impl ProbeStore {
             .instances
             .iter()
             .filter(|(instance, entry)| {
-                !referenced.contains_key(*instance) && entry.written.is_empty() && entry.gaps.is_empty() && entry.ended
+                !referenced.contains_key(*instance)
+                    && entry.written.is_empty()
+                    && entry.gaps.is_empty()
+                    && entry.ended
+                    && !self.observed_since(entry, first)
             })
             .map(|(instance, _)| instance.clone())
             .collect();
@@ -857,6 +1108,189 @@ impl ProbeStore {
         writer.into_inner().map_err(|error| error.into_error())?.sync_all()?;
         Ok(())
     }
+}
+
+/// Events of a history query at most; the newest are kept.
+pub const HISTORY_LIMIT: usize = 10_000;
+
+/// What a history of the timeline asks for: events with a `display` within `[since, until]`
+/// (Unix seconds), of some groups, members and categories.
+#[derive(Debug, Clone, Default, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryQuery {
+    pub since: i64,
+    pub until: i64,
+    /// Events tied to any of these groups; those tied to any group when absent.
+    #[serde(default)]
+    pub groups: Option<Vec<String>>,
+    /// The events of global scope, whatever the groups and the member.
+    #[serde(default)]
+    pub include_global: bool,
+    /// Events involving a member of this name, or with `instance` and `object` only that
+    /// object.
+    #[serde(default)]
+    pub member: Option<String>,
+    #[serde(default)]
+    pub instance: Option<String>,
+    #[serde(default)]
+    pub object: Option<u64>,
+    #[serde(default)]
+    pub categories: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEvent {
+    pub time: String,
+    pub instance: String,
+    pub seq: u64,
+    pub display: Value,
+}
+
+/// A part of the events of an instance not on disk, with the times of the events around it
+/// when they are within the days read.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryGap {
+    pub from: u64,
+    pub to: u64,
+    pub reason: SeqGapReason,
+    pub after_time: Option<String>,
+    pub before_time: Option<String>,
+}
+
+/// What is known of how complete the events of an instance are.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceCoverage {
+    pub instance: String,
+    pub started_at: String,
+    /// Every event up to this one is on disk, recorded as a gap, or expired.
+    pub saved_to: u64,
+    /// The time of the event `saved_to` names, when it is within the days read.
+    pub saved_time: Option<String>,
+    pub observed_at: Option<String>,
+    pub observed_latest: Option<u64>,
+    /// Events the core had when last observed that are not saved: still to be collected, or
+    /// lost once the core ended.
+    pub pending: Option<u64>,
+    pub gaps: Vec<HistoryGap>,
+    pub coverage_unknown: bool,
+    /// The core ended: what it recorded after the last collection is unknown.
+    pub tail_unknown: bool,
+    pub ended: bool,
+    /// Whether the core tells which events to show: `None` when its params are not kept.
+    pub display: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPage {
+    pub events: Vec<HistoryEvent>,
+    pub truncated: bool,
+    pub groups: Vec<String>,
+    pub members: Vec<String>,
+    pub categories: Vec<String>,
+    pub instances: Vec<InstanceCoverage>,
+    pub retained_since: Option<String>,
+}
+
+/// An event read next to a gap, by its sequence number and time.
+type Neighbour = Option<(u64, String)>;
+
+/// An event of a history, ordered by its time and then by its place among the events.
+struct Newest {
+    at: i64,
+    event: HistoryEvent,
+}
+
+impl Newest {
+    const fn key(&self) -> (i64, u64, &str) {
+        (self.at, self.event.seq, self.event.instance.as_str())
+    }
+}
+
+impl PartialEq for Newest {
+    fn eq(&self, other: &Self) -> bool {
+        self.key() == other.key()
+    }
+}
+
+impl Eq for Newest {}
+
+impl PartialOrd for Newest {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Newest {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.key().cmp(&other.key())
+    }
+}
+
+fn event_time(event: &Value) -> Option<i64> {
+    event
+        .get("time")
+        .and_then(Value::as_str)
+        .and_then(|time| chrono::DateTime::parse_from_rfc3339(time).ok())
+        .map(|time| time.timestamp())
+}
+
+fn parse_time(time: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(time)
+        .ok()
+        .map(|time| time.timestamp())
+}
+
+/// Whether a display tied to some groups, or of global scope, passes a query.
+fn display_matches(display: &Value, instance: &str, query: &HistoryQuery) -> bool {
+    let scope = display.get("scope");
+    let kind = scope
+        .and_then(|scope| scope.get("kind"))
+        .and_then(Value::as_str)
+        .unwrap_or("global");
+    let groups: Vec<&str> = scope
+        .and_then(|scope| scope.get("groups"))
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let global = kind == "global";
+    if global && !query.include_global {
+        return false;
+    }
+    if let Some(wanted) = &query.groups
+        && !global
+        && !groups.iter().any(|group| wanted.iter().any(|w| w == group))
+    {
+        return false;
+    }
+    if let Some(categories) = &query.categories {
+        let category = display.get("category").and_then(Value::as_str).unwrap_or_default();
+        if !categories.iter().any(|c| c == category) {
+            return false;
+        }
+    }
+    if let Some(member) = &query.member {
+        let members = display.get("members").and_then(Value::as_array);
+        let involved = members.is_some_and(|members| {
+            members.iter().any(|m| {
+                m.get("name").and_then(Value::as_str) == Some(member.as_str())
+                    && match (&query.instance, query.object) {
+                        (Some(wanted), Some(object)) => {
+                            wanted == instance && m.get("object").and_then(Value::as_u64) == Some(object)
+                        }
+                        _ => true,
+                    }
+            })
+        });
+        // the common events around a member stay with it, as long as global ones are asked for
+        if !involved && !global {
+            return false;
+        }
+    }
+    true
 }
 
 /// Notes an instance not seen yet, keeping the latest few.

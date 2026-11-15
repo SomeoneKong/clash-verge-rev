@@ -12,8 +12,9 @@ mod store;
 
 pub use model::{Identity, InstanceState, Meta, Route, RouteKind, State, UsageGap, UsageGapReason};
 pub use probes::{
-    DayIndex, InstanceContexts, MissingContexts, PROBE_FORMAT, PROBE_PAGE_SIZE, PROBE_PAGES, PROBE_RETENTION_DAYS,
-    ProbeInstance, ProbeMeta, ProbePlan, ProbeStore, SeqGap, SeqGapReason, SeqRange,
+    DayIndex, HISTORY_LIMIT, HistoryEvent, HistoryGap, HistoryPage, HistoryQuery, InstanceContexts, InstanceCoverage,
+    MissingContexts, PROBE_FORMAT, PROBE_PAGE_SIZE, PROBE_PAGES, PROBE_RETENTION_DAYS, ProbeInstance, ProbeMeta,
+    ProbePlan, ProbeStore, SeqGap, SeqGapReason, SeqRange,
 };
 pub use query::{UsageGranularity, UsageItem, UsagePoint, UsageQuery, UsageRange, UsageReport, UsageView};
 pub use store::{BATCH_HOURS, CoreBucket, CoreEntry, CoreUsage, InitParams, Store};

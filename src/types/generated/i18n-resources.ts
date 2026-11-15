@@ -348,6 +348,72 @@ export interface TranslationResources {
       title: string
       unsupported: string
     }
+    probeView: {
+      actions: {
+        history: string
+        refresh: string
+      }
+      coverage: {
+        displayUnknown: string
+        gap: string
+        gapUnknown: string
+        lost: string
+        noDisplay: string
+        observed: string
+        pending: string
+        tail: string
+        tailAt: string
+        unknown: string
+      }
+      filters: {
+        allGroups: string
+        allMembers: string
+        allObjects: string
+        includeGlobal: string
+        member: string
+      }
+      history: {
+        empty: string
+        failed: string
+        gap: string
+        loadMore: string
+        object: string
+        open: string
+        restart: string
+        restartTail: string
+        restartTailAt: string
+        title: string
+        truncated: string
+      }
+      member: {
+        unavailable: string
+      }
+      mode: {
+        strategy: string
+      }
+      ranges: {
+        '1h': string
+        '24h': string
+        '3d': string
+        '6h': string
+        '7d': string
+      }
+      refresh: {
+        busy: string
+        caughtUp: string
+        changed: string
+        failed: string
+        partial: string
+        unreachable: string
+        unsupported: string
+      }
+      status: {
+        noGroups: string
+        outdated: string
+        stale: string
+        unsupported: string
+      }
+    }
     profiles: {
       components: {
         card: {
