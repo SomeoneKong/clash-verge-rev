@@ -1,0 +1,68 @@
+{
+  "mode": {
+    "strategy": "策略詳細"
+  },
+  "actions": {
+    "refresh": "重新整理",
+    "history": "歷史"
+  },
+  "member": {
+    "unavailable": "策略資訊暫不可用",
+    "expand": "展開詳情",
+    "collapse": "收起詳情"
+  },
+  "status": {
+    "unsupported": "目前核心不提供策略檢視，列表照常顯示",
+    "noGroups": "目前設定沒有按需探測的群組",
+    "stale": "策略檢視讀取於 {{time}}，已過期：{{error}}",
+    "outdated": "介面版本較舊，部分資訊不顯示"
+  },
+  "history": {
+    "open": "策略歷史",
+    "title": "策略歷史",
+    "object": "（{{provider}} · 物件 {{object}}）",
+    "restart": "核心重新啟動",
+    "empty": "這段時間沒有可顯示的記錄",
+    "truncated": "記錄較多，只顯示最近的部分",
+    "gap": "{{from}} 至 {{to}} 之間缺少 {{count}} 筆記錄",
+    "restartTail": "此前的核心在最後一次採集後的記錄未知",
+    "loadMore": "再顯示 {{count}} 筆更早的記錄",
+    "failed": "查詢失敗：{{error}}",
+    "restartTailAt": "此前的核心在 {{time}} 最後一次採集，之後的記錄未知"
+  },
+  "ranges": {
+    "1h": "1 小時",
+    "6h": "6 小時",
+    "24h": "24 小時",
+    "3d": "3 天",
+    "7d": "7 天"
+  },
+  "filters": {
+    "allGroups": "全部群組",
+    "includeGlobal": "包含全域事件",
+    "member": "成員：{{name}}",
+    "allObjects": "同名的全部記錄",
+    "allMembers": "全部成員"
+  },
+  "refresh": {
+    "caughtUp": "已採集到核心當時的最新記錄（#{{seq}}）",
+    "partial": "部分完成，還剩 {{count}} 條待採集",
+    "unsupported": "目前核心不提供決策記錄",
+    "unreachable": "核心沒有回應",
+    "failed": "重新整理失敗：{{error}}",
+    "changed": "採集期間核心重新啟動或記錄已溢出，下一次採集會接著處理",
+    "busy": "另一次採集正在進行，請稍後再試"
+  },
+  "coverage": {
+    "observed": "核心 {{instance}} 最後一次成功採集：{{time}}",
+    "pending": "核心 {{instance}} 還有 {{count}} 條記錄待採集，這段時間的變化可能未顯示",
+    "gap": "核心 {{instance}} 在 {{from}} 至 {{to}} 之間有記錄缺失",
+    "gapUnknown": "核心 {{instance}} 有記錄缺失，時間不詳",
+    "tail": "核心 {{instance}} 最後一次採集之後的記錄未知",
+    "unknown": "核心 {{instance}} 的記錄是否完整無法確定",
+    "noDisplay": "核心 {{instance}} 不提供顯示資訊（舊核心），這段時間的變化不顯示",
+    "displayUnknown": "無法確定核心 {{instance}} 是否提供顯示資訊",
+    "lost": "核心 {{instance}} 已結束，有 {{count}} 筆記錄未儲存，已無法補採",
+    "tailAt": "核心 {{instance}} 在 {{time}} 最後一次採集，之後的記錄未知"
+  }
+}

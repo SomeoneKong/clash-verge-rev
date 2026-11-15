@@ -1,16 +1,26 @@
-import { LanOutlined, LanRounded, WarningRounded } from '@mui/icons-material'
+import {
+  HistoryRounded,
+  InsightsRounded,
+  LanOutlined,
+  LanRounded,
+  WarningRounded,
+} from '@mui/icons-material'
 import { Box, Button, ButtonGroup, Typography } from '@mui/material'
 import { useLockFn } from 'ahooks'
 import { useCallback, useEffect, useReducer, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BaseDialog, BasePage, TooltipIcon } from '@/components/base'
+import { ProbeViewBanner } from '@/components/proxy/probe-elements'
+import { ProbeHistoryDialog } from '@/components/proxy/probe-history'
 import { ProviderButton } from '@/components/proxy/provider-button'
 import { ProxyGroups } from '@/components/proxy/proxy-groups'
+import { useProbeView } from '@/hooks/use-probe-view'
 import {
   useAppRefreshers,
   useClashConfigData,
 } from '@/providers/app-data-context'
+import { ProbeViewProvider } from '@/providers/probe-view-provider'
 import {
   getRuntimeProxyChainConfig,
   patchClashMode,
@@ -26,7 +36,42 @@ const MODE_SET = new Set<string>(MODES)
 const isMode = (value: unknown): value is Mode =>
   typeof value === 'string' && MODE_SET.has(value)
 
-const ProxyPage = () => {
+// The strategy mode and the strategy history of the on-demand groups.
+const StrategyButtons = () => {
+  const { t } = useTranslation()
+  const { enabled, setEnabled, openHistory } = useProbeView()
+  return (
+    <>
+      <Button
+        size="small"
+        variant={enabled ? 'contained' : 'outlined'}
+        aria-pressed={enabled}
+        onClick={() => setEnabled(!enabled)}
+        sx={{ ml: 1, whiteSpace: 'nowrap' }}
+        startIcon={<InsightsRounded fontSize="small" />}
+      >
+        {t('probeView.mode.strategy')}
+      </Button>
+      <Button
+        size="small"
+        variant="outlined"
+        onClick={() => openHistory()}
+        sx={{ ml: 1, whiteSpace: 'nowrap' }}
+        startIcon={<HistoryRounded fontSize="small" />}
+      >
+        {t('probeView.history.open')}
+      </Button>
+    </>
+  )
+}
+
+const ProxyPage = () => (
+  <ProbeViewProvider>
+    <ProxyPageContent />
+  </ProbeViewProvider>
+)
+
+const ProxyPageContent = () => {
   const { t } = useTranslation()
 
   // 从 localStorage 恢复链式代理按钮状态
@@ -198,15 +243,23 @@ const ProxyPage = () => {
           >
             {t('proxies.page.actions.toggleChain')}
           </Button>
+
+          <StrategyButtons />
         </Box>
       }
     >
-      <ProxyGroups
-        mode={curMode ?? 'rule'}
-        isChainMode={isChainMode}
-        chainConfigData={chainConfigData}
-        onExitChainMode={onExitChainMode}
-      />
+      <ProbeHistoryDialog />
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <ProbeViewBanner />
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <ProxyGroups
+            mode={curMode ?? 'rule'}
+            isChainMode={isChainMode}
+            chainConfigData={chainConfigData}
+            onExitChainMode={onExitChainMode}
+          />
+        </Box>
+      </Box>
       <BaseDialog
         open={chainConfirmOpen}
         title={t('proxies.page.actions.toggleChain')}
