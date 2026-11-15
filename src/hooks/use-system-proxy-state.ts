@@ -38,7 +38,10 @@ export const useSystemProxyState = () => {
     if (proxy_auto_config) {
       if (!autoproxy?.enable) return false
       if (!pacPort) return false
-      return autoproxy.url === `http://${host}:${pacPort}/commands/pac`
+      // The backend puts a digest of the script into the query.
+      return (
+        autoproxy.url.split('?')[0] === `http://${host}:${pacPort}/commands/pac`
+      )
     } else {
       if (!sysproxy?.enable) return false
       return sysproxy.server === `${host}:${displayedMixedPort}`
