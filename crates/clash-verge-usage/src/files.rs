@@ -74,13 +74,13 @@ pub fn create_dir(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-fn replace(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn replace(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::rename(from, to)
 }
 
 /// `MoveFileEx` returns only once the rename is on disk when asked to write through.
 #[cfg(windows)]
-fn replace(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn replace(from: &Path, to: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt as _;
     use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW};
     let wide = |path: &Path| path.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();

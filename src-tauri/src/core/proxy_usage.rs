@@ -1,12 +1,15 @@
 //! Keeps the traffic the core counts per proxy, collected into `traffic/` in the app data
 //! directory: every minute while a core runs, and from a core about to be stopped or replaced.
+//! The decision records of the core's probe strategy are collected along, into `probes/`.
 //!
 //! The store is owned by whoever holds `STORE`; its file work runs in `block_in_place`, and a
 //! collection runs as a task of its own, so a caller with a time budget moves on when the
-//! budget is spent while the collection still finishes its writes in order.
+//! budget is spent while the collection still finishes its writes in order. The usage is
+//! collected first and its result kept apart, then the decision records: their requests hold
+//! no store, and `PROBES` only while their writes are made.
 
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         LazyLock,
         atomic::{AtomicBool, AtomicI64, Ordering},
@@ -17,10 +20,11 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use clash_verge_logging::{Type, logging};
 use clash_verge_usage::{
-    CoreBucket, CoreEntry, CoreUsage, Identity, InitParams, Route, RouteKind, Store, UsageQuery, UsageReport,
+    CoreBucket, CoreEntry, CoreUsage, Identity, InitParams, PROBE_PAGE_SIZE, PROBE_PAGES, ProbeStore, Route, RouteKind,
+    Store, UsageQuery, UsageReport,
 };
 use tauri_plugin_mihomo::models::{ProxyUsage, ProxyUsageKind};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::Instant};
 
 use crate::{
     core::{
@@ -47,12 +51,18 @@ static SKIP_FINAL_COLLECTIONS: AtomicBool = AtomicBool::new(false);
 /// The statistics day the store was last archived on.
 static ARCHIVED_DAY: AtomicI64 = AtomicI64::new(i64::MIN);
 
+static PROBES: LazyLock<Mutex<Option<ProbeStore>>> = LazyLock::new(|| Mutex::new(None));
+/// Cores noted as stopped in the usage store, waiting to be noted in the decision records.
+static PROBE_STOPS: LazyLock<parking_lot::Mutex<Vec<String>>> = LazyLock::new(Default::default);
+/// The statistics day the decision records were last trimmed to their retention on.
+static RETAINED_DAY: AtomicI64 = AtomicI64::new(i64::MIN);
+
 pub fn start() {
     AsyncHandler::spawn(|| async {
         tokio::time::sleep(FIRST_COLLECTION_DELAY).await;
         loop {
             if core_running() && !handle::Handle::global().is_exiting() {
-                collect_within(PERIODIC_COLLECTION).await;
+                collect_within(PERIODIC_COLLECTION, false).await;
             }
             tokio::time::sleep(COLLECTION_INTERVAL).await;
         }
@@ -88,11 +98,13 @@ impl Drop for PendingStop {
 
 /// Collects from the core about to be stopped or replaced. Its end is registered right away, so
 /// that a collection seeing the next core, which can only start after this, notes it first.
+/// Returns once the decision records are collected too, or the budget is spent: stopping the
+/// core earlier would race their requests.
 pub async fn before_core_ends(budget: Duration) -> PendingStop {
     if SKIP_FINAL_COLLECTIONS.load(Ordering::Relaxed) {
         return PendingStop(None);
     }
-    let collected = collect_within(budget).await;
+    let collected = collect_within(budget, true).await;
     if let Some(instance) = &collected {
         PENDING_STOPS.lock().push((instance.clone(), false));
     }
@@ -101,13 +113,21 @@ pub async fn before_core_ends(budget: Duration) -> PendingStop {
 
 /// Notes the ends of stopped cores still waiting, before the app leaves.
 pub async fn finish() {
-    if !PENDING_STOPS.lock().iter().any(|(_, confirmed)| *confirmed) {
+    if !PENDING_STOPS.lock().iter().any(|(_, confirmed)| *confirmed) && PROBE_STOPS.lock().is_empty() {
         return;
     }
     let task = tauri::async_runtime::spawn(async {
         let mut slot = STORE.lock().await;
         let store = blocking(|| open_store(&mut slot))?;
-        blocking(|| note_stops(store, None).map(drop))
+        let day_offset = store.meta().day_offset;
+        blocking(|| note_stops(store, None).map(drop))?;
+        drop(slot);
+        let mut probes = PROBES.lock().await;
+        blocking(|| {
+            let probes = open_probes(&mut probes, day_offset)?;
+            note_probe_changes(probes)?;
+            probes.give_up_ended()
+        })
     });
     match tokio::time::timeout(FINAL_COLLECTION, task).await {
         Ok(Ok(Ok(()))) => {}
@@ -132,15 +152,27 @@ fn note_stops(store: &mut Store, running: Option<&str>) -> Result<bool> {
         if confirmed && Some(instance.as_str()) != running {
             store.mark_stopped(&instance)?;
             PENDING_STOPS.lock().retain(|(pending, _)| *pending != instance);
+            PROBE_STOPS.lock().push(instance);
         }
     }
     Ok(true)
 }
 
+/// Notes in the decision records the stops of cores the usage noted; each leaves the queue
+/// only once it is on disk.
+fn note_probe_changes(store: &mut ProbeStore) -> Result<()> {
+    let stops = PROBE_STOPS.lock().clone();
+    for instance in stops {
+        store.mark_stopped(&instance)?;
+        PROBE_STOPS.lock().retain(|pending| *pending != instance);
+    }
+    Ok(())
+}
+
 /// Collects before the app leaves a core running for the next app to take over.
 pub async fn before_app_exit() {
     if !SKIP_FINAL_COLLECTIONS.load(Ordering::Relaxed) {
-        collect_within(FINAL_COLLECTION).await;
+        collect_within(FINAL_COLLECTION, true).await;
     }
 }
 
@@ -151,15 +183,40 @@ pub fn skip_final_collections() {
 
 pub async fn query(request: UsageQuery) -> Result<UsageReport> {
     if core_running() {
-        collect_within(FINAL_COLLECTION).await;
+        collect_within(FINAL_COLLECTION, false).await;
     }
     let mut slot = STORE.lock().await;
     blocking(|| open_store(&mut slot)?.query(request, now_hour()))
 }
 
+/// Exports the usage to `path`, and beside it the decision records, as `<name>.probes.jsonl`,
+/// and what explains them, as `<name>.probes-meta.json`.
 pub async fn export(path: &Path) -> Result<()> {
+    let exported_at = chrono::Utc::now().to_rfc3339();
     let mut slot = STORE.lock().await;
-    blocking(|| open_store(&mut slot)?.export(path, &chrono::Utc::now().to_rfc3339()))
+    let store = blocking(|| open_store(&mut slot))?;
+    let (client, day_offset) = (store.meta().client.clone(), store.meta().day_offset);
+    blocking(|| store.export(path, &exported_at))?;
+    // the usage collections need not wait for the decision records
+    drop(slot);
+    let (events_path, meta_path) = probe_export_paths(path);
+    let mut probes = PROBES.lock().await;
+    blocking(|| {
+        let probes = open_probes(&mut probes, day_offset)?;
+        note_probe_changes(probes)?;
+        probes.export(&events_path, &meta_path, &client, &exported_at)
+    })
+}
+
+fn probe_export_paths(path: &Path) -> (PathBuf, PathBuf) {
+    let stem = path
+        .file_stem()
+        .map_or_else(|| "usage".to_owned(), |stem| stem.to_string_lossy().into_owned());
+    let dir = path.parent().unwrap_or_else(|| Path::new(""));
+    (
+        dir.join(format!("{stem}.probes.jsonl")),
+        dir.join(format!("{stem}.probes-meta.json")),
+    )
 }
 
 fn blocking<T>(operation: impl FnOnce() -> T) -> T {
@@ -170,10 +227,27 @@ fn core_running() -> bool {
     !matches!(*CoreManager::global().get_running_mode(), RunningMode::NotRunning)
 }
 
-/// The instance collected from, or `None` when nothing was or the budget ran out first; then
-/// the collection goes on in the background.
-async fn collect_within(budget: Duration) -> Option<String> {
-    match tokio::time::timeout(budget, tauri::async_runtime::spawn(collect())).await {
+/// The instance the usage was collected from, or `None` when nothing was or the budget ran out
+/// first; then the collection goes on in the background. The decision records are collected
+/// after the usage, whose result does not wait for them; with `wait_records`, this returns once
+/// they are collected or the budget is spent.
+async fn collect_within(budget: Duration, wait_records: bool) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + budget;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let task = tauri::async_runtime::spawn(async move {
+        let _ = sender.send(collect().await);
+        if let Err(error) = maintain_probes().await {
+            logging!(warn, Type::Core, "Failed to maintain probe records: {error:#}");
+        }
+        if let Err(error) = collect_probes(deadline).await {
+            logging!(debug, Type::Core, "Failed to collect probe records: {error:#}");
+        }
+    });
+    let usage = tokio::time::timeout_at(deadline, receiver).await;
+    if wait_records {
+        let _ = tokio::time::timeout_at(deadline, task).await;
+    }
+    match usage {
         Ok(Ok(Ok(instance))) => instance,
         Ok(Ok(Err(error))) => {
             logging!(warn, Type::Core, "Failed to collect proxy usage: {error:#}");
@@ -243,6 +317,199 @@ fn archive_once_a_day(store: &mut Store) -> Result<()> {
         ARCHIVED_DAY.store(today, Ordering::Relaxed);
     }
     Ok(())
+}
+
+/// Keeps the decision records up to date with what the usage knows of the cores, which is
+/// on disk and so holds across restarts, and to their retention once a day, whether or not the
+/// core has any records to collect.
+async fn maintain_probes() -> Result<()> {
+    let day_offset = day_offset().await?;
+    let current = {
+        let mut slot = STORE.lock().await;
+        blocking(|| {
+            open_store(&mut slot).map(|store| store.state().instance.as_ref().map(|current| current.id.clone()))
+        })?
+    };
+    with_probes(day_offset, |store| {
+        note_probe_changes(store)?;
+        if let Some(current) = &current {
+            store.end_before(current)?;
+        }
+        // Which cores ended is what the usage found, not which core a collection of events
+        // read: one may have been overtaken by one reading the next core.
+        store.give_up_ended()?;
+        let today = (now_hour() + day_offset).div_euclid(24);
+        if RETAINED_DAY.load(Ordering::Relaxed) != today {
+            store.retain(today)?;
+            RETAINED_DAY.store(today, Ordering::Relaxed);
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// Collects the decision records the reachable core has not reported yet, and the contexts
+/// they refer to. A core without them is left alone. No request starts after `deadline`; what
+/// was read is stored all the same.
+async fn collect_probes(deadline: Instant) -> Result<()> {
+    let mihomo = handle::Handle::mihomo();
+    // An empty page tells the instance and what the core keeps.
+    let Some(head) = within(deadline, mihomo.get_probe_events(u64::MAX, 1)).await else {
+        return Ok(());
+    };
+    let Some(head) = head? else {
+        return Ok(());
+    };
+    let instance = head.instance.clone();
+    let day_offset = day_offset().await?;
+    let plan = with_probes(day_offset, |store| {
+        note_probe_changes(store)?;
+        store.begin(&instance, &head.started_at, head.oldest)
+    })
+    .await?;
+    // One budget of pages for reading corrupt ranges again and reading on.
+    let mut pages = PROBE_PAGES;
+    let mut reads = plan
+        .refetch
+        .iter()
+        .map(|range| (range[0].saturating_sub(1), range[1]))
+        .chain(std::iter::once((plan.after, head.latest)));
+    let mut paging = PagingEnd::Done;
+    while paging == PagingEnd::Done
+        && let Some((after, until)) = reads.next()
+    {
+        paging = read_probe_events(&instance, after, until, day_offset, &mut pages, deadline).await?;
+    }
+
+    let missing = with_probes(day_offset, |store| store.missing_contexts(&instance)).await?;
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let Some(response) = within(
+        deadline,
+        mihomo.get_probe_contexts(&missing.configs, &missing.exclusions),
+    )
+    .await
+    else {
+        return Ok(());
+    };
+    // a core replaced between the requests numbers its versions anew
+    if let Some(response) = response?
+        && response.instance == instance
+    {
+        let unavailable: Vec<(String, u64)> = response
+            .unavailable
+            .iter()
+            .map(|context| (context.kind.clone(), context.version))
+            .collect();
+        with_probes(day_offset, |store| {
+            store.save_contexts(&instance, &response.contexts, &unavailable)
+        })
+        .await?;
+    }
+    Ok(())
+}
+
+/// A request of the collection of events, `None` when the budget is spent before it starts or
+/// before it is answered.
+async fn within<T>(deadline: Instant, request: impl Future<Output = T>) -> Option<T> {
+    if Instant::now() >= deadline {
+        return None;
+    }
+    tokio::time::timeout_at(deadline, request).await.ok()
+}
+
+/// Why reading pages of events stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PagingEnd {
+    /// The range was read, as far as the core had it.
+    Done,
+    /// The pages or the time of this collection are spent.
+    Budget,
+    /// The core changed or dropped events meanwhile: the next collection takes note of it.
+    Changed,
+}
+
+/// Reads the events of `instance` after `after`, up to `until` or the core's latest at the
+/// first page, taking the pages from `pages`.
+async fn read_probe_events(
+    instance: &str,
+    mut after: u64,
+    until: u64,
+    day_offset: i64,
+    pages: &mut usize,
+    deadline: Instant,
+) -> Result<PagingEnd> {
+    let mihomo = handle::Handle::mihomo();
+    let mut end = until;
+    let mut first = true;
+    while after < end {
+        if *pages == 0 {
+            return Ok(PagingEnd::Budget);
+        }
+        *pages -= 1;
+        let Some(page) = within(deadline, mihomo.get_probe_events(after, PROBE_PAGE_SIZE)).await else {
+            return Ok(PagingEnd::Budget);
+        };
+        let Some(page) = page? else {
+            return Ok(PagingEnd::Changed);
+        };
+        if page.instance != instance || page.oldest > after + 1 {
+            return Ok(PagingEnd::Changed);
+        }
+        if first {
+            end = end.min(page.latest);
+            first = false;
+        }
+        let events: Vec<serde_json::Value> = page
+            .events
+            .into_iter()
+            .filter(|event| {
+                event
+                    .get("seq")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some_and(|seq| seq <= end)
+            })
+            .collect();
+        let Some(last) = events
+            .last()
+            .and_then(|event| event.get("seq"))
+            .and_then(serde_json::Value::as_u64)
+        else {
+            break;
+        };
+        let schema = page.schema;
+        with_probes(day_offset, |store| {
+            store.append(instance, schema, after, &events).map(drop)
+        })
+        .await?;
+        after = last;
+    }
+    Ok(PagingEnd::Done)
+}
+
+async fn with_probes<T>(day_offset: i64, operation: impl FnOnce(&mut ProbeStore) -> Result<T>) -> Result<T> {
+    let mut slot = PROBES.lock().await;
+    blocking(|| operation(open_probes(&mut slot, day_offset)?))
+}
+
+fn open_probes(slot: &mut Option<ProbeStore>, day_offset: i64) -> Result<&mut ProbeStore> {
+    if slot.is_none() {
+        let dir = dirs::app_home_dir()?.join("probes");
+        *slot = Some(ProbeStore::open(&dir, day_offset)?);
+    }
+    slot.as_mut().context("the probe record store is not open")
+}
+
+/// The statistics day offset of the usage, which the decision records share.
+async fn day_offset() -> Result<i64> {
+    static DAY_OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    if let Some(offset) = DAY_OFFSET.get() {
+        return Ok(*offset);
+    }
+    let mut slot = STORE.lock().await;
+    let offset = blocking(|| open_store(&mut slot).map(|store| store.meta().day_offset))?;
+    Ok(*DAY_OFFSET.get_or_init(|| offset))
 }
 
 fn open_store(slot: &mut Option<Store>) -> Result<&mut Store> {
