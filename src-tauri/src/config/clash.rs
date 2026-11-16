@@ -110,6 +110,7 @@ impl IClashTemp {
         map.insert("secret".into(), "set-your-secret".into());
         map.insert("external-controller-cors".into(), cors_map.into());
         map.insert("unified-delay".into(), true.into());
+        map.insert("process-managed".into(), true.into());
         Self(map)
     }
 
@@ -135,6 +136,9 @@ impl IClashTemp {
         config.insert("socks-port".into(), socks_port.into());
         config.insert("port".into(), port.into());
         config.insert("external-controller".into(), ctrl.into());
+        // The app upgrades and restarts the core: one that did so itself would outlive the
+        // process the service or the app tracks.
+        config.insert("process-managed".into(), true.into());
 
         #[cfg(unix)]
         config.insert("external-controller-unix".into(), external_controller_unix.into());
