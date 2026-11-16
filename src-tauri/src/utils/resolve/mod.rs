@@ -99,6 +99,9 @@ async fn resolve_setup() {
     refresh_tray_menu().await;
     resolve_done();
     crate::core::fork_updater::show_after_update().await;
+    if crate::core::fork_updater::unattended_requested() {
+        crate::core::fork_updater::update_unattended().await;
+    }
 }
 
 pub async fn resolve_reset_async() -> Result<(), anyhow::Error> {
@@ -241,13 +244,15 @@ async fn refresh_tray_menu() {
 }
 
 async fn init_window() {
-    let is_silent_start = Config::verge().await.data_arc().enable_silent_start.unwrap_or(false);
+    let is_silent_start = Config::verge().await.data_arc().enable_silent_start.unwrap_or(false)
+        || crate::core::fork_updater::start_hidden();
     WindowManager::create_window(!is_silent_start).await;
 }
 
 #[cfg(target_os = "macos")]
 async fn resolve_dock_show() {
-    let is_silent_start = Config::verge().await.data_arc().enable_silent_start.unwrap_or(false);
+    let is_silent_start = Config::verge().await.data_arc().enable_silent_start.unwrap_or(false)
+        || crate::core::fork_updater::start_hidden();
     if is_silent_start {
         Handle::global().set_activation_policy_accessory();
     }
