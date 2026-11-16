@@ -1,6 +1,7 @@
 //! Keeps the traffic the core counts per proxy, collected into `traffic/` in the app data
 //! directory: every minute while a core runs, and from a core about to be stopped or replaced.
-//! The decision records of the core's probe strategy are collected along, into `probes/`.
+//! The connection stats are collected along from the same core, and the decision records of
+//! the core's probe strategy into `probes/`.
 //!
 //! The store is owned by whoever holds `STORE`; its file work runs in `block_in_place`, and a
 //! collection runs as a task of its own, so a caller with a time budget moves on when the
@@ -12,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         LazyLock,
-        atomic::{AtomicBool, AtomicI64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -48,6 +49,8 @@ static STORE: LazyLock<Mutex<Option<Store>>> = LazyLock::new(|| Mutex::new(None)
 /// whether their stop or replacement is confirmed yet.
 static PENDING_STOPS: LazyLock<parking_lot::Mutex<Vec<(String, bool)>>> = LazyLock::new(Default::default);
 static SKIP_FINAL_COLLECTIONS: AtomicBool = AtomicBool::new(false);
+/// Numbers the final collections, so that what one of them read is not taken for another's.
+static FINAL_ATTEMPT: AtomicU64 = AtomicU64::new(0);
 /// The statistics day the store was last archived on.
 static ARCHIVED_DAY: AtomicI64 = AtomicI64::new(i64::MIN);
 
@@ -64,7 +67,7 @@ pub fn start() {
         tokio::time::sleep(FIRST_COLLECTION_DELAY).await;
         loop {
             if core_running() && !handle::Handle::global().is_exiting() {
-                collect_within(PERIODIC_COLLECTION, false).await;
+                collect_within(PERIODIC_COLLECTION, None).await;
             }
             tokio::time::sleep(COLLECTION_INTERVAL).await;
         }
@@ -106,15 +109,29 @@ pub async fn before_core_ends(budget: Duration) -> PendingStop {
     if SKIP_FINAL_COLLECTIONS.load(Ordering::Relaxed) {
         return PendingStop(None);
     }
-    let collected = collect_within(budget, true).await;
+    let attempt = FINAL_ATTEMPT.fetch_add(1, Ordering::Relaxed) + 1;
+    let collected = collect_within(budget, Some(attempt)).await;
     if let Some(instance) = &collected {
+        crate::core::connection_stats::before_stop(instance, attempt);
         PENDING_STOPS.lock().push((instance.clone(), false));
     }
     PendingStop(collected)
 }
 
-/// Notes the ends of stopped cores still waiting, before the app leaves.
+/// Notes the ends of stopped cores still waiting, then saves the pending connection stats
+/// with the stops passed on to them, before the app leaves.
 pub async fn finish() {
+    note_stops_before_exit().await;
+    let conns = tauri::async_runtime::spawn(crate::core::connection_stats::finish());
+    match tokio::time::timeout(FINAL_COLLECTION, conns).await {
+        Ok(Ok(Ok(()))) => {}
+        Ok(Ok(Err(error))) => logging!(warn, Type::Core, "Failed to save connection stats: {error:#}"),
+        Ok(Err(error)) => logging!(warn, Type::Core, "Saving connection stats failed: {error}"),
+        Err(_) => logging!(warn, Type::Core, "Saving connection stats took too long"),
+    }
+}
+
+async fn note_stops_before_exit() {
     if !PENDING_STOPS.lock().iter().any(|(_, confirmed)| *confirmed) && PROBE_STOPS.lock().is_empty() {
         return;
     }
@@ -154,6 +171,7 @@ fn note_stops(store: &mut Store, running: Option<&str>) -> Result<bool> {
         if confirmed && Some(instance.as_str()) != running {
             store.mark_stopped(&instance)?;
             PENDING_STOPS.lock().retain(|(pending, _)| *pending != instance);
+            crate::core::connection_stats::note_stop(instance.clone());
             PROBE_STOPS.lock().push(instance);
         }
     }
@@ -174,7 +192,15 @@ fn note_probe_changes(store: &mut ProbeStore) -> Result<()> {
 /// Collects before the app leaves a core running for the next app to take over.
 pub async fn before_app_exit() {
     if !SKIP_FINAL_COLLECTIONS.load(Ordering::Relaxed) {
-        collect_within(FINAL_COLLECTION, true).await;
+        let attempt = FINAL_ATTEMPT.fetch_add(1, Ordering::Relaxed) + 1;
+        collect_within(FINAL_COLLECTION, Some(attempt)).await;
+    }
+}
+
+/// Collects right away, as a change of the connection stats switch asks.
+pub async fn collect_now() {
+    if core_running() {
+        collect_within(PERIODIC_COLLECTION, None).await;
     }
 }
 
@@ -185,14 +211,15 @@ pub fn skip_final_collections() {
 
 pub async fn query(request: UsageQuery) -> Result<UsageReport> {
     if core_running() {
-        collect_within(FINAL_COLLECTION, false).await;
+        collect_within(FINAL_COLLECTION, None).await;
     }
     let mut slot = STORE.lock().await;
     blocking(|| open_store(&mut slot)?.query(request, now_hour()))
 }
 
 /// Exports the usage to `path`, and beside it the decision records, as `<name>.probes.jsonl`,
-/// and what explains them, as `<name>.probes-meta.json`.
+/// what explains them, as `<name>.probes-meta.json`, and the connection stats, as
+/// `<name>.connections.json`.
 pub async fn export(path: &Path) -> Result<()> {
     let exported_at = chrono::Utc::now().to_rfc3339();
     let mut slot = STORE.lock().await;
@@ -207,7 +234,16 @@ pub async fn export(path: &Path) -> Result<()> {
         let probes = open_probes(&mut probes, day_offset)?;
         note_probe_changes(probes)?;
         probes.export(&events_path, &meta_path, &client, &exported_at)
-    })
+    })?;
+    drop(probes);
+    let stem = path
+        .file_stem()
+        .map_or_else(|| "usage".to_owned(), |stem| stem.to_string_lossy().into_owned());
+    let conns_path = path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(format!("{stem}.connections.json"));
+    crate::core::connection_stats::export(&conns_path, &client, &exported_at).await
 }
 
 fn probe_export_paths(path: &Path) -> (PathBuf, PathBuf) {
@@ -230,14 +266,24 @@ fn core_running() -> bool {
 }
 
 /// The instance the usage was collected from, or `None` when nothing was or the budget ran out
-/// first; then the collection goes on in the background. The decision records are collected
-/// after the usage, whose result does not wait for them; with `wait_records`, this returns once
-/// they are collected or the budget is spent.
-async fn collect_within(budget: Duration, wait_records: bool) -> Option<String> {
+/// first; then the collection goes on in the background. The connection stats and then the
+/// decision records are collected after the usage, whose result does not wait for them; with
+/// `final_attempt`, a final collection, this returns once they are collected or the budget is
+/// spent.
+async fn collect_within(budget: Duration, final_attempt: Option<u64>) -> Option<String> {
+    let wait_records = final_attempt.is_some();
     let deadline = tokio::time::Instant::now() + budget;
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let task = tauri::async_runtime::spawn(async move {
-        let _ = sender.send(collect().await);
+        let usage = collect().await;
+        let instance = usage.as_ref().ok().cloned().flatten();
+        let _ = sender.send(usage);
+        // only from the core the usage reached, with every stop before it noted
+        if let Some(instance) = instance
+            && let Err(error) = crate::core::connection_stats::collect(&instance, final_attempt, deadline).await
+        {
+            logging!(warn, Type::Core, "Failed to collect connection stats: {error:#}");
+        }
         if let Err(error) = maintain_probes().await {
             logging!(warn, Type::Core, "Failed to maintain probe records: {error:#}");
         }
@@ -620,8 +666,9 @@ fn open_probes(slot: &mut Option<ProbeStore>, day_offset: i64) -> Result<&mut Pr
     slot.as_mut().context("the probe record store is not open")
 }
 
-/// The statistics day offset of the usage, which the decision records share.
-async fn day_offset() -> Result<i64> {
+/// The statistics day offset of the usage, which the decision records and the connection
+/// stats share.
+pub(crate) async fn day_offset() -> Result<i64> {
     static DAY_OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
     if let Some(offset) = DAY_OFFSET.get() {
         return Ok(*offset);

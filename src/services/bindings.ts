@@ -226,6 +226,13 @@ export const commands = {
     __TAURI_INVOKE<JsonValueOf>('query_probe_history', { query }),
   refreshProbeHistory: () =>
     __TAURI_INVOKE<ProbeRefresh>('refresh_probe_history'),
+  getConnectionStatsStatus: () =>
+    __TAURI_INVOKE<ConnStatsStatus>('get_connection_stats_status'),
+  setConnectionStats: (enabled: boolean) =>
+    __TAURI_INVOKE<null>('set_connection_stats', { enabled }),
+  queryConnectionStats: (query: ConnQuery) =>
+    __TAURI_INVOKE<ConnReport>('query_connection_stats', { query }),
+  clearConnectionStats: () => __TAURI_INVOKE<null>('clear_connection_stats'),
   getProfileLoginNodes: () =>
     __TAURI_INVOKE<LoginProfile[]>('get_profile_login_nodes'),
   getNodeLogins: (profiles: LoginProfile[]) =>
@@ -266,6 +273,13 @@ export type ClashInfo = {
   secret: string | null
 }
 
+/**  Whether what a core counted in an hour was taken. */
+export type Collected =
+  | 'taken'
+  /**  The core may still add to it, and it is not read in full yet. */
+  | 'pending'
+  | 'gap'
+
 /**  Structured command failure returned to the frontend. */
 export type CommandFailure =
   | CommandFailure_Serialize
@@ -297,6 +311,79 @@ export type ConfigNode = {
   config: NodeConfig
 }
 
+export type ConnDimension =
+  | 'target'
+  | 'process'
+  /**  The full chain, from the group a rule chose out to the proxy. */
+  | 'chain'
+  /**  The proxy that made the connections. */
+  | 'exit'
+  | 'rule'
+  /**  The source IP. */
+  | 'source'
+  | 'inbound'
+  | 'network'
+
+export type ConnFilter = {
+  dimension: ConnDimension
+  value: string
+}
+
+export type ConnGroup = {
+  /**  One value per dimension grouped by; a key no longer known has empty values. */
+  values: string[]
+  up: number
+  down: number
+  /**  Connections opened. */
+  conns: number
+}
+
+export type ConnHour = {
+  hour: number
+  coverage: Coverage
+  recorded: Recorded
+  cores: ConnHourCore[]
+}
+
+export type ConnHourCore = {
+  instance: string
+  /**  What the core said of its counting in the hour; none when nothing of it was taken. */
+  counting: Counting | null
+  collected: Collected
+}
+
+export type ConnQuery = {
+  /**  First and last UTC hour, both inclusive, at most a week apart. */
+  fromHour: number
+  toHour: number
+  groupBy: ConnDimension[]
+  filters?: ConnFilter[]
+}
+
+export type ConnReport = {
+  fromHour: number
+  toHour: number
+  /**  The largest groups by traffic. */
+  groups: ConnGroup[]
+  /**  Everything else added up. */
+  other: ConnGroup | null
+  total: ConnGroup
+  hours: ConnHour[]
+}
+
+/**  What the settings show. */
+export type ConnStatsStatus = {
+  recording: boolean
+  /**  The core is still read up to where recording was turned off. */
+  finishing: boolean
+  /**  Recording was turned off as the state was lost with its backup. */
+  settingLost: boolean
+  /**  Whether the running core counts connections, none when it cannot or did not answer. */
+  coreCounting: boolean | null
+  /**  Anything was ever recorded, so the hour ranges can be queried. */
+  hasHistory: boolean
+}
+
 /**  Why the Core is not running, kept until a Core starts again. */
 export type CoreFailure =
   | { kind: 'startFailed'; detail: string }
@@ -306,6 +393,24 @@ export type CoreUpgradeReport = {
   /**  False when the managed core was already at the latest version. */
   upgraded: boolean
 }
+
+/**  Whether the core counted connections in an hour. */
+export type Counting =
+  /**  Throughout the hour. */
+  | 'on'
+  /**  For a part of it. */
+  | 'partial'
+  | 'off'
+
+/**  What an hour of the result stands for, the least complete of its cores. */
+export type Coverage =
+  | 'unknown'
+  | 'not_recorded'
+  | 'gap'
+  | 'pending'
+  | 'not_counted'
+  | 'partly_counted'
+  | 'complete'
 
 export type DelayHistory = {
   time: string
@@ -1097,6 +1202,9 @@ export type ProxyViewV1_Serialize = {
   standalone: string[]
   providers: ProxyProviderView_Serialize[]
 }
+
+/**  How far an hour was recorded, by the app's recording spans. */
+export type Recorded = 'full' | 'part' | 'none'
 
 /**  The kind and route of what the core counted for a proxy. */
 export type Route = Route_Serialize | Route_Deserialize

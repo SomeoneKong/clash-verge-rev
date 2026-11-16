@@ -69,3 +69,29 @@ pub async fn export_proxy_usage(path: std::string::String) -> CmdResult<()> {
         .await
         .stringify_err()
 }
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_connection_stats_status() -> CmdResult<crate::core::connection_stats::ConnStatsStatus> {
+    crate::core::connection_stats::status().await.stringify_err()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_connection_stats(enabled: bool) -> CmdResult<()> {
+    crate::core::connection_stats::set_recording(enabled)
+        .await
+        .stringify_err()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn query_connection_stats(query: clash_verge_usage::ConnQuery) -> CmdResult<clash_verge_usage::ConnReport> {
+    crate::core::connection_stats::query(query).await.stringify_err()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn clear_connection_stats() -> CmdResult<()> {
+    crate::core::connection_stats::clear().await.stringify_err()
+}
