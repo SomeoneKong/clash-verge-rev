@@ -18,6 +18,7 @@ import getSystem from '@/utils/get-system'
 
 import { ClashCoreViewer } from './mods/clash-core-viewer'
 import { ClashPortViewer } from './mods/clash-port-viewer'
+import { ConnectionStatsSetting } from './mods/connection-stats-setting'
 import { ControllerViewer } from './mods/controller-viewer'
 import { DnsViewer } from './mods/dns-viewer'
 import { HeaderConfiguration } from './mods/external-controller-cors'
@@ -369,6 +370,8 @@ const SettingClash = ({ onError }: Props) => {
         }
         onClick={() => nodeLoginRef.current?.open()}
       />
+
+      <ConnectionStatsSetting />
     </SettingList>
   )
 }

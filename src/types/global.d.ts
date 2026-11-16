@@ -194,6 +194,7 @@ interface IConnectionsItem {
   rulePayload: string
   curUpload?: number // upload speed, calculate at runtime
   curDownload?: number // download speed, calculate at runtime
+  closedAt?: string // when the core recorded it closed
 }
 
 interface IConnections {
