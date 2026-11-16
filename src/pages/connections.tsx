@@ -27,6 +27,7 @@ import {
   type SearchState,
   VirtualList,
 } from '@/components/base'
+import { ConnectionAggregate } from '@/components/connection/connection-aggregate'
 import {
   ConnectionDetail,
   ConnectionDetailRef,
@@ -88,9 +89,10 @@ const ConnectionsPage = () => {
   )
   const [hasSearch, setHasSearch] = useState(false)
   const [curOrderOpt, setCurOrderOpt] = useState<OrderKey>('default')
-  const [connectionsType, setConnectionsType] = useState<'active' | 'closed'>(
-    'active',
-  )
+  const [connectionsType, setConnectionsType] = useState<
+    'active' | 'closed' | 'aggregate'
+  >('active')
+  const aggregate = connectionsType === 'aggregate'
 
   const {
     response: { data: connections },
@@ -134,7 +136,7 @@ const ConnectionsPage = () => {
   const detailRef = useRef<ConnectionDetailRef>(null!)
 
   const selectConnectionsType = useCallback(
-    (type: 'active' | 'closed') => {
+    (type: 'active' | 'closed' | 'aggregate') => {
       if (type === connectionsType) return
       detailRef.current?.close()
       setIsColumnManagerOpen(false)
@@ -251,8 +253,15 @@ const ConnectionsPage = () => {
             {t('connections.components.actions.closed')}{' '}
             {connections?.closedConnections.length}
           </Button>
+          <Button
+            size="small"
+            variant={aggregate ? 'contained' : 'outlined'}
+            onClick={() => selectConnectionsType('aggregate')}
+          >
+            {t('connStats.title')}
+          </Button>
         </ButtonGroup>
-        {!isTableLayout && (
+        {!isTableLayout && !aggregate && (
           <BaseStyledSelect
             value={curOrderOpt}
             onChange={(e) => setCurOrderOpt(e.target.value as OrderKey)}
@@ -264,19 +273,21 @@ const ConnectionsPage = () => {
             ))}
           </BaseStyledSelect>
         )}
-        <Box
-          sx={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            '& > *': {
+        {!aggregate && (
+          <Box
+            sx={{
               flex: 1,
-            },
-          }}
-        >
-          <BaseSearchBox onSearch={handleSearch} />
-        </Box>
-        {isTableLayout && hasTableData && (
+              display: 'flex',
+              alignItems: 'center',
+              '& > *': {
+                flex: 1,
+              },
+            }}
+          >
+            <BaseSearchBox onSearch={handleSearch} />
+          </Box>
+        )}
+        {isTableLayout && hasTableData && !aggregate && (
           <Tooltip title={t('connections.components.columnManager.title')}>
             <IconButton
               size="small"
@@ -290,7 +301,14 @@ const ConnectionsPage = () => {
         )}
       </Box>
 
-      {!hasTableData ? (
+      {aggregate ? (
+        <ConnectionAggregate
+          active={connections.activeConnections}
+          closed={connections.recordedClosed}
+          feed={connections.closedFeed}
+          polledAt={connections.polledAt}
+        />
+      ) : !hasTableData ? (
         <BaseEmpty />
       ) : isTableLayout ? (
         <ConnectionTable

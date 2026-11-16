@@ -23,6 +23,8 @@ vi.mock('react', () => ({
 }))
 vi.mock('tauri-plugin-mihomo-api', () => ({
   getConnections: vi.fn(),
+  // a core without closed connection records
+  getClosedConnections: vi.fn(() => Promise.resolve(null)),
   MihomoWebSocket: { connect_connections_count: vi.fn() },
 }))
 
