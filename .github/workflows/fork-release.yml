@@ -26,24 +26,39 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # debuginfo: what the release binary carries. The Windows installer ships no PDB and
+        # the macOS build keeps its debug info in the object files, so neither would ever
+        # reach a user; on Linux it is in the binary and gives backtraces their lines.
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             payloads: true
+            debuginfo: 0
           - os: macos-latest
             target: aarch64-apple-darwin
             payloads: true
+            debuginfo: 0
           # rpm takes no '-' in a version, which the custom versions have
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             args: --bundles deb
             payloads: true
+            debuginfo: 1
           - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             args: --bundles deb
             payloads: true
+            debuginfo: 1
     runs-on: ${{ matrix.os }}
     steps:
+      # Real-time scanning of the thousands of files a Rust build writes slows the Windows
+      # build down; a runner that refuses builds as before.
+      - name: Stop real-time scanning
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
       - uses: actions/checkout@v7
 
       # Toolchain and Node versions follow upstream release.yml.
@@ -90,11 +105,13 @@ jobs:
         shell: bash
         env:
           NODE_OPTIONS: '--max_old_space_size=4096'
+          CARGO_PROFILE_RELEASE_DEBUG: ${{ matrix.debuginfo }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        # --timings records where the build spends its time, uploaded below.
         run: |
           echo '{"bundle":{"macOS":{"signingIdentity":"-"}}}' > "${RUNNER_TEMP}/fork.conf.json"
-          pnpm tauri build --target ${{ matrix.target }} --config "${RUNNER_TEMP}/fork.conf.json" ${{ matrix.args }}
+          pnpm tauri build --target ${{ matrix.target }} --config "${RUNNER_TEMP}/fork.conf.json" ${{ matrix.args }} -- --timings
 
       - name: Build update payloads
         if: matrix.payloads
@@ -115,6 +132,13 @@ jobs:
             target/${{ matrix.target }}/release/bundle/deb/*.deb*
             target/${{ matrix.target }}/release/bundle/payloads/*
           if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: timings-${{ matrix.target }}
+          path: target/cargo-timings/cargo-timing.html
+          if-no-files-found: ignore
 
   release:
     needs: [build]
@@ -161,7 +185,8 @@ jobs:
       - name: Collect assets
         run: |
           mkdir assets
-          find artifacts -type f | while IFS= read -r f; do
+          # the build timings are for the run, not the release
+          find artifacts -type f -not -path 'artifacts/timings-*' | while IFS= read -r f; do
             name="$(basename "$f" | tr ' ' '.')"
             case "$name" in
               Clash.Verge.app.tar.gz*)
