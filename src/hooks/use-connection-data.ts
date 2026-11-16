@@ -1,7 +1,18 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
-import { getConnections, MihomoWebSocket } from 'tauri-plugin-mihomo-api'
+import {
+  type ClosedConnection,
+  type ClosedConnections,
+  getClosedConnections,
+  getConnections,
+  MihomoWebSocket,
+} from 'tauri-plugin-mihomo-api'
 
 const MAX_CLOSED_CONNS_NUM = 500
+// the closed connections the core keeps, which are kept here alike
+const CLOSED_KEEP_MS = 31 * 60_000
+const CLOSED_KEEP_MAX = 10_000
+const CLOSED_PAGE_SIZE = 1_000
+const CLOSED_PAGES_PER_POLL = 5
 const CONNECTION_POLL_INTERVAL_MS = 1_000
 const CONNECTION_RECONNECT_DELAY_MS = 1_000
 
@@ -10,11 +21,38 @@ type ConnectionListener = () => void
 
 const metadataValue = (value?: string) => value || ''
 
+/** What the closed connections read from the core cover. */
+export interface ClosedFeed {
+  /** The core keeps closed connections; null until it answered. */
+  supported: boolean | null
+  /** Every record the core had when the last poll began is read. */
+  caughtUp: boolean
+  /** Connections closed at or before this time (ms) may be missing; 0 when none. */
+  missingUntil: number
+  /** When the core read from started (ms): earlier closes are of the core before it. */
+  startedAt: number
+}
+
+const initClosedFeed: ClosedFeed = {
+  supported: null,
+  caughtUp: false,
+  missingUntil: 0,
+  startedAt: 0,
+}
+
+const unsupportedClosedFeed: ClosedFeed = {
+  ...initClosedFeed,
+  supported: false,
+}
+
 const initConnData: ConnectionMonitorData = {
   uploadTotal: 0,
   downloadTotal: 0,
   activeConnections: [],
   closedConnections: [],
+  recordedClosed: [],
+  closedFeed: initClosedFeed,
+  polledAt: 0,
 }
 
 interface ConnectionMonitorData {
@@ -22,6 +60,11 @@ interface ConnectionMonitorData {
   downloadTotal: number
   activeConnections: IConnectionsItem[]
   closedConnections: IConnectionsItem[]
+  /** Every closed connection kept, those cleared from the list included. */
+  recordedClosed: IConnectionsItem[]
+  closedFeed: ClosedFeed
+  /** When the snapshot was taken (ms). */
+  polledAt: number
 }
 
 interface ConnectionSummaryPayload {
@@ -175,10 +218,12 @@ const mergeConnectionSnapshot = (
   payload: IConnections,
   previous: ConnectionMonitorData,
   elapsedMs: number,
+  now: number,
 ): ConnectionMonitorData => {
   const nextConnections = payload.connections ?? []
   const previousActive = previous.activeConnections ?? []
-  const previousClosed = previous.closedConnections ?? []
+  // what clearing the list hides is still kept for the recent statistics
+  const previousClosed = previous.recordedClosed ?? []
   const previousActiveById = new Map<string, IConnectionsItem>()
 
   for (let i = 0; i < previousActive.length; i++) {
@@ -198,10 +243,12 @@ const mergeConnectionSnapshot = (
 
   if (previousActiveById.size === 0) {
     return {
+      ...previous,
       uploadTotal: payload.uploadTotal ?? 0,
       downloadTotal: payload.downloadTotal ?? 0,
       activeConnections,
       closedConnections: previousClosed,
+      recordedClosed: previousClosed,
     }
   }
 
@@ -217,6 +264,7 @@ const mergeConnectionSnapshot = (
 
   const keepFromRemoved = MAX_CLOSED_CONNS_NUM - closedConnections.length
   let skipRemoved = Math.max(0, removedConnectionCount - keepFromRemoved)
+  const closedAt = new Date(now).toISOString()
 
   for (let i = 0; i < previousActive.length; i++) {
     const connection = previousActive[i]
@@ -225,14 +273,202 @@ const mergeConnectionSnapshot = (
       skipRemoved -= 1
       continue
     }
-    closedConnections.push(connection)
+    closedConnections.push({ ...connection, closedAt })
   }
 
   return {
+    ...previous,
     uploadTotal: payload.uploadTotal ?? 0,
     downloadTotal: payload.downloadTotal ?? 0,
     activeConnections,
     closedConnections,
+    recordedClosed: closedConnections,
+  }
+}
+
+// The closed connections the core records, read by sequence number. A record read again,
+// as traffic counted after the close renumbers it, replaces the one read before.
+interface ClosedState {
+  instance: string
+  startedAt: number
+  seq: number
+  caughtUp: boolean
+  coreEvictedUntil: number
+  localEvictedUntil: number
+  records: Map<string, IConnectionsItem>
+  // the sequence number each record was read with
+  seqs: Map<string, number>
+  // the records as numbered when the list was cleared: not listed until read again
+  cleared: Map<string, number>
+}
+
+const initClosedState = (): ClosedState => ({
+  instance: '',
+  startedAt: 0,
+  seq: 0,
+  caughtUp: false,
+  coreEvictedUntil: 0,
+  localEvictedUntil: 0,
+  records: new Map(),
+  seqs: new Map(),
+  cleared: new Map(),
+})
+
+let closedState = initClosedState()
+let closedSupported: boolean | null = null
+// connections the snapshots found closed before this time (ms) are not listed
+let snapshotClearedAt = 0
+
+const closedTime = (item: IConnectionsItem) =>
+  item.closedAt ? Date.parse(item.closedAt) : 0
+
+const closedItem = (
+  record: ClosedConnection,
+  previous: IConnectionsItem | undefined,
+): IConnectionsItem => {
+  // the plugin serializes its enums, typed as unions, as plain strings
+  const connection = record as unknown as IConnectionsItem
+  if (
+    previous &&
+    previous.closedAt === record.closedAt &&
+    previous.upload === record.upload &&
+    previous.download === record.download
+  ) {
+    return previous
+  }
+  return {
+    ...normalizeConnection(connection, previous, 0),
+    curUpload: 0,
+    curDownload: 0,
+    closedAt: record.closedAt,
+  }
+}
+
+const mergeClosedPage = (page: ClosedConnections) => {
+  for (const record of page.records) {
+    const key = `${page.instance}/${record.id}`
+    closedState.records.set(
+      key,
+      closedItem(record, closedState.records.get(key)),
+    )
+    closedState.seqs.set(key, record.seq)
+    closedState.seq = Math.max(closedState.seq, record.seq)
+  }
+  closedState.coreEvictedUntil = page.evictedUntil
+    ? Date.parse(page.evictedUntil)
+    : 0
+}
+
+const pruneClosed = (now: number) => {
+  const { records, seqs, cleared } = closedState
+  const drop = (key: string) => {
+    records.delete(key)
+    seqs.delete(key)
+    cleared.delete(key)
+  }
+  for (const [key, item] of records) {
+    if (now - closedTime(item) > CLOSED_KEEP_MS) drop(key)
+  }
+  if (records.size <= CLOSED_KEEP_MAX) return
+  const oldest = [...records.entries()].sort(
+    (a, b) => closedTime(a[1]) - closedTime(b[1]),
+  )
+  for (const [key, item] of oldest.slice(0, records.size - CLOSED_KEEP_MAX)) {
+    closedState.localEvictedUntil = Math.max(
+      closedState.localEvictedUntil,
+      closedTime(item),
+    )
+    drop(key)
+  }
+}
+
+/**
+ * Reads the records closed since the last one read, up to the latest the core had at the
+ * first page, a few pages per poll. Returns false when the poll is to be dropped: the core
+ * changed between the requests. Sets the core's support on the first answer.
+ */
+const readClosed = async (activeInstance: string | null | undefined) => {
+  try {
+    return await readClosedPages(activeInstance)
+  } finally {
+    // whatever failed, what is kept no longer is not shown
+    pruneClosed(Date.now())
+  }
+}
+
+const readClosedPages = async (activeInstance: string | null | undefined) => {
+  let page = await getClosedConnections(closedState.seq, CLOSED_PAGE_SIZE)
+  if (page === null) {
+    // the list goes on from the snapshots; a core keeping records later is read from its first
+    closedState = initClosedState()
+    closedSupported = false
+    return true
+  }
+  closedSupported = true
+  if (activeInstance && page.instance !== activeInstance) return false
+  if (page.instance !== closedState.instance) {
+    const { records, seqs, cleared, localEvictedUntil } = closedState
+    closedState = {
+      ...initClosedState(),
+      instance: page.instance,
+      startedAt: Date.parse(page.startedAt) || 0,
+      records,
+      seqs,
+      cleared,
+      localEvictedUntil,
+    }
+    page = await getClosedConnections(0, CLOSED_PAGE_SIZE)
+    if (page === null || page.instance !== closedState.instance) return false
+  }
+  const target = page.latest
+  closedState.caughtUp = false
+  for (let pages = 1; ; pages++) {
+    mergeClosedPage(page)
+    if (closedState.seq >= target || page.records.length === 0) {
+      closedState.caughtUp = true
+      break
+    }
+    if (pages >= CLOSED_PAGES_PER_POLL) break
+    const next = await getClosedConnections(closedState.seq, CLOSED_PAGE_SIZE)
+    if (next === null || next.instance !== closedState.instance) break
+    page = next
+  }
+  return true
+}
+
+/** The snapshot with the closed connections the core recorded. */
+const withRecordedClosed = (
+  data: ConnectionMonitorData,
+): ConnectionMonitorData => {
+  const { records, seqs, cleared } = closedState
+  const closedIds = new Set<string>()
+  for (const [key, item] of records) {
+    if (key.startsWith(`${closedState.instance}/`)) closedIds.add(item.id)
+  }
+  const entries = [...records.entries()].sort(
+    (a, b) => closedTime(b[1]) - closedTime(a[1]),
+  )
+  const recordedClosed = entries.map(([, item]) => item)
+  const closedConnections = entries
+    .filter(([key]) => cleared.get(key) !== seqs.get(key))
+    .map(([, item]) => item)
+  return {
+    ...data,
+    // a connection with a record is closed, whatever a snapshot taken before said
+    activeConnections: closedIds.size
+      ? data.activeConnections.filter((item) => !closedIds.has(item.id))
+      : data.activeConnections,
+    closedConnections,
+    recordedClosed,
+    closedFeed: {
+      supported: true,
+      caughtUp: closedState.caughtUp,
+      missingUntil: Math.max(
+        closedState.coreEvictedUntil,
+        closedState.localEvictedUntil,
+      ),
+      startedAt: closedState.startedAt,
+    },
   }
 }
 
@@ -246,7 +482,34 @@ const applyConnectionSnapshot = (payload: IConnections) => {
   const now = Date.now()
   const elapsedMs = lastSnapshotAt ? now - lastSnapshotAt : 0
   lastSnapshotAt = now
-  connectionData = mergeConnectionSnapshot(payload, connectionData, elapsedMs)
+  connectionData = {
+    ...mergeConnectionSnapshot(payload, connectionData, elapsedMs, now),
+    polledAt: now,
+  }
+  if (closedSupported) {
+    connectionData = withRecordedClosed(connectionData)
+  } else {
+    connectionData = {
+      ...connectionData,
+      closedConnections: connectionData.recordedClosed.filter(
+        (item) => closedTime(item) > snapshotClearedAt,
+      ),
+      closedFeed:
+        closedSupported === false
+          ? unsupportedClosedFeed
+          : connectionData.closedFeed,
+    }
+  }
+  notifyConnectionListeners()
+}
+
+// A poll dropped as the core changed meanwhile leaves the closed list behind.
+const markClosedBehind = () => {
+  if (!closedSupported || !connectionData.closedFeed.caughtUp) return
+  connectionData = {
+    ...connectionData,
+    closedFeed: { ...connectionData.closedFeed, caughtUp: false },
+  }
   notifyConnectionListeners()
 }
 
@@ -273,14 +536,30 @@ const createConnectionPoller = () => {
     if (current !== generation || !hasSubscribers()) return
     polling = true
     try {
-      const { uploadTotal, downloadTotal, connections } = await getConnections()
+      const { uploadTotal, downloadTotal, connections, instance } =
+        await getConnections()
+      let consistent = true
+      // a core that reports its instance may have been upgraded to keep closed connections
+      if (closedSupported !== false || instance) {
+        try {
+          consistent = await readClosed(instance)
+        } catch (err) {
+          // the active connections are still shown, the closed ones as far as read
+          closedState.caughtUp = false
+          console.warn('[Connections] Failed to fetch closed connections', err)
+        }
+      }
       if (current === generation && hasSubscribers()) {
-        applyConnectionSnapshot({
-          uploadTotal,
-          downloadTotal,
-          // the plugin serializes its enums, typed as unions, as plain strings
-          connections: (connections ?? []) as unknown as IConnectionsItem[],
-        })
+        if (consistent) {
+          applyConnectionSnapshot({
+            uploadTotal,
+            downloadTotal,
+            // the plugin serializes its enums, typed as unions, as plain strings
+            connections: (connections ?? []) as unknown as IConnectionsItem[],
+          })
+        } else {
+          markClosedBehind()
+        }
       }
     } catch (err) {
       console.warn('[Connections] Failed to fetch connections', err)
@@ -453,6 +732,9 @@ const subscribeConnectionSummary = (listener: ConnectionListener) => {
 }
 
 const clearClosedConnectionData = () => {
+  // the records stay for the recent statistics; only the list starts again
+  closedState.cleared = new Map(closedState.seqs)
+  snapshotClearedAt = Date.now()
   if (connectionData.closedConnections.length === 0) return
   connectionData = {
     ...connectionData,

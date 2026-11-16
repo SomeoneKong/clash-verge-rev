@@ -37,6 +37,71 @@ export interface TranslationResources {
         title: string
       }
     }
+    connStats: {
+      active: string
+      clear: {
+        confirm: string
+        title: string
+      }
+      closedAt: string
+      columns: {
+        conns: string
+        download: string
+        downloadSpeed: string
+        upload: string
+        uploadSpeed: string
+      }
+      coverage: {
+        gap: string
+        not_counted: string
+        not_recorded: string
+        partly_counted: string
+        partlyRecorded: string
+        pending: string
+        separator: string
+        unknown: string
+      }
+      dimensions: {
+        chain: string
+        exit: string
+        inbound: string
+        network: string
+        process: string
+        rule: string
+        source: string
+        target: string
+      }
+      drill: {
+        by: string
+        none: string
+      }
+      notes: {
+        enableToRecord: string
+        oldCore: string
+        recentMissing: string
+        recentReading: string
+        recentTotals: string
+      }
+      other: string
+      ranges: {
+        active: string
+        d7: string
+        h24: string
+        m15: string
+        m30: string
+        m5: string
+        today: string
+      }
+      setting: {
+        title: string
+        tooltip: string
+      }
+      status: {
+        applying: string
+        settingLost: string
+      }
+      title: string
+    }
     home: {
       components: {
         clashInfo: {
