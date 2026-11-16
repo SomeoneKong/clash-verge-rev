@@ -127,7 +127,9 @@ async fn notify_existing_instance(record: &InstanceRecord) -> bool {
         Err(_) => return false,
     };
     #[cfg(not(target_os = "macos"))]
-    let request = if let Some(arg) = std::env::args().nth(1).as_deref() {
+    let request = if crate::core::fork_updater::unattended_requested() {
+        client.get(format!("http://127.0.0.1:{}/commands/update-unattended", record.port))
+    } else if let Some(arg) = std::env::args().nth(1).as_deref() {
         if arg.starts_with("clash:") {
             client
                 .get(format!("http://127.0.0.1:{}/commands/scheme", record.port))
@@ -139,7 +141,11 @@ async fn notify_existing_instance(record: &InstanceRecord) -> bool {
         client.get(format!("http://127.0.0.1:{}/commands/visible", record.port))
     };
     #[cfg(target_os = "macos")]
-    let request = client.get(format!("http://127.0.0.1:{}/commands/visible", record.port));
+    let request = if crate::core::fork_updater::unattended_requested() {
+        client.get(format!("http://127.0.0.1:{}/commands/update-unattended", record.port))
+    } else {
+        client.get(format!("http://127.0.0.1:{}/commands/visible", record.port))
+    };
 
     request
         .header(INSTANCE_TOKEN_HEADER, &record.token)
@@ -232,7 +238,23 @@ fn start_embedded_server(listener: tokio::net::TcpListener, token: String) {
             Ok::<_, warp::Rejection>(warp::reply::with_status("ok".to_string(), warp::http::StatusCode::OK))
         });
 
-    let commands = auth.clone().and(visible).or(auth.and(scheme)).or(pac);
+    let update_unattended = warp::path!("commands" / "update-unattended").and_then(|| async {
+        if !COMMANDS_READY.load(Ordering::Acquire) {
+            return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                "starting".to_string(),
+                warp::http::StatusCode::SERVICE_UNAVAILABLE,
+            ));
+        }
+        AsyncHandler::spawn(crate::core::fork_updater::update_unattended);
+        Ok::<_, warp::Rejection>(warp::reply::with_status("ok".to_string(), warp::http::StatusCode::OK))
+    });
+
+    let commands = auth
+        .clone()
+        .and(visible)
+        .or(auth.clone().and(scheme))
+        .or(auth.and(update_unattended))
+        .or(pac);
     AsyncHandler::spawn(move || async move {
         warp::serve(commands)
             .incoming(listener)

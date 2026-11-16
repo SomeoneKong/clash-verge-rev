@@ -81,7 +81,8 @@ async fn refresh_lightweight_tray_state() {
 pub async fn auto_lightweight_boot() -> Result<()> {
     let verge_config = Config::verge().await;
     let is_enable_auto = verge_config.data_arc().enable_auto_light_weight_mode.unwrap_or(false);
-    let is_silent_start = verge_config.data_arc().enable_silent_start.unwrap_or(false);
+    let is_silent_start =
+        super::fork_updater::start_hidden() || verge_config.data_arc().enable_silent_start.unwrap_or(false);
     if is_enable_auto {
         enable_auto_light_weight_mode().await;
     }

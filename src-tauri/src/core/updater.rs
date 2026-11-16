@@ -515,8 +515,9 @@ impl SilentUpdater {
         };
 
         // Set before installing: a full update or the Windows installer leaves without returning.
-        let show = super::fork_updater::ShowAfterUpdate::ask();
-        match super::fork_updater::install(&update, &on_event, &cancel).await {
+        let show = super::fork_updater::WindowAfterUpdate::show();
+        match super::fork_updater::install(&update, &on_event, &cancel, super::fork_updater::TriggerKind::Manual).await
+        {
             Ok(super::fork_updater::Outcome::Applied) => {
                 self.manual_cancel.lock().take();
                 Self::delete_cache();
