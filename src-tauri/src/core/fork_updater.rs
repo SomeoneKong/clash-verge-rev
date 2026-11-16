@@ -11,8 +11,9 @@ use clash_verge_updater::protocol::{Hello, PROTOCOL, Request, Response, Staged, 
 use clash_verge_updater::state::{Finished, Outcome as TxnOutcome};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use tauri_plugin_updater::Update;
+use tauri_plugin_updater::{Update, UpdaterExt as _};
 use tokio::sync::{Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 
@@ -268,14 +269,31 @@ fn show_marker() -> Option<std::path::PathBuf> {
         .map(|dir| dir.join("fork-updater-show"))
 }
 
-/// Asks the app that starts after an update the user began from the window to show its window,
-/// even with silent start. Withdrawn when dropped; the app leaving for the update keeps it.
-pub struct ShowAfterUpdate(Option<std::path::PathBuf>);
+fn hide_marker() -> Option<std::path::PathBuf> {
+    crate::utils::dirs::app_home_dir()
+        .ok()
+        .map(|dir| dir.join("fork-updater-hide"))
+}
 
-impl ShowAfterUpdate {
-    pub fn ask() -> Self {
-        let marker = show_marker().filter(|marker| std::fs::write(marker, "").is_ok());
-        Self(marker)
+/// Asks the app that starts after an update to show its window, even with silent start, when the
+/// user began the update from the window; or to keep it hidden, even without silent start, when
+/// nobody did. Withdrawn when dropped; the app leaving for the update keeps it.
+pub struct WindowAfterUpdate(Option<std::path::PathBuf>);
+
+impl WindowAfterUpdate {
+    pub fn show() -> Self {
+        Self::ask(show_marker(), hide_marker())
+    }
+
+    fn hide() -> Self {
+        Self::ask(hide_marker(), show_marker())
+    }
+
+    fn ask(marker: Option<std::path::PathBuf>, other: Option<std::path::PathBuf>) -> Self {
+        if let Some(other) = other {
+            let _ = std::fs::remove_file(other);
+        }
+        Self(marker.filter(|marker| std::fs::write(marker, "").is_ok()))
     }
 
     /// Keeps the request for the restart that follows.
@@ -284,7 +302,7 @@ impl ShowAfterUpdate {
     }
 }
 
-impl Drop for ShowAfterUpdate {
+impl Drop for WindowAfterUpdate {
     fn drop(&mut self) {
         if let Some(marker) = self.0.take() {
             let _ = std::fs::remove_file(marker);
@@ -292,16 +310,29 @@ impl Drop for ShowAfterUpdate {
     }
 }
 
-/// Runs once startup is done. A request older than an hour is dropped: the restart it was for
-/// did not happen, and this start may be an unattended one.
-pub async fn show_after_update() {
-    let Some(marker) = show_marker() else {
-        return;
+/// Takes a request left for this start. One older than an hour is dropped: the restart it was
+/// for did not happen, and this start may be another one.
+fn take_request(marker: Option<std::path::PathBuf>) -> bool {
+    let Some(marker) = marker else {
+        return false;
     };
     let fresh = std::fs::metadata(&marker)
         .and_then(|meta| meta.modified())
         .is_ok_and(|time| time.elapsed().is_ok_and(|age| age < Duration::from_secs(60 * 60)));
-    if std::fs::remove_file(&marker).is_err() || !fresh {
+    std::fs::remove_file(&marker).is_ok() && fresh
+}
+
+/// Whether this start keeps the window hidden as with silent start, having been restarted by an
+/// unattended update. Decided once: the request is taken by the first to ask, which callers do
+/// before reading the silent start setting so that it is taken either way.
+pub fn start_hidden() -> bool {
+    static HIDDEN: OnceLock<bool> = OnceLock::new();
+    *HIDDEN.get_or_init(|| take_request(hide_marker()))
+}
+
+/// Runs once startup is done.
+pub async fn show_after_update() {
+    if !take_request(show_marker()) {
         return;
     }
     logging!(info, Type::Window, "Showing the window after an update");
@@ -352,11 +383,88 @@ fn fallback_unless_running(error: &anyhow::Error) -> Result<Outcome> {
     Ok(Outcome::Fallback(format!("{error:#}")))
 }
 
+/// Asks the running app, or this one once started, to update unattended.
+pub const UNATTENDED_FLAG: &str = "--update-unattended";
+
+pub fn unattended_requested() -> bool {
+    std::env::args().skip(1).any(|arg| arg == UNATTENDED_FLAG)
+}
+
+/// Updates to the version offered, if any, without asking anyone and without showing the window
+/// before or after. Only through the update component: the installer the app falls back to
+/// otherwise asks for elevation. A version marked as breaking is left for the user.
+pub async fn update_unattended() {
+    if let Err(error) = try_update_unattended().await {
+        logging!(warn, Type::System, "Unattended update: {error:#}");
+    }
+}
+
+async fn try_update_unattended() -> Result<()> {
+    let gate = take_gate()?;
+    if !available().await {
+        bail!("the update component is not available");
+    }
+    let Some(update) = super::handle::Handle::app_handle().updater()?.check().await? else {
+        logging!(info, Type::System, "Unattended update: no update available");
+        return Ok(());
+    };
+    if update
+        .body
+        .as_ref()
+        .is_some_and(|body| body.to_lowercase().contains("break change"))
+    {
+        logging!(
+            info,
+            Type::System,
+            "Unattended update: v{} has breaking changes, left for the user",
+            update.version
+        );
+        return Ok(());
+    }
+    logging!(info, Type::System, "Unattended update: installing v{}", update.version);
+    // Set before installing: a full update leaves without returning.
+    let hidden = WindowAfterUpdate::hide();
+    match install(&update, |_| {}, &CancellationToken::new(), TriggerKind::Unattended).await? {
+        Outcome::Applied => {
+            hidden.keep();
+            drop(gate);
+            crate::feat::restart_after_update().await;
+        }
+        Outcome::Cancelled => {}
+        Outcome::Fallback(reason) => {
+            logging!(
+                warn,
+                Type::System,
+                "Unattended update: v{} not installed: {reason}",
+                update.version
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Who asked for an update, as the component records it.
+#[derive(Clone, Copy)]
+pub enum TriggerKind {
+    Manual,
+    Unattended,
+}
+
+impl TriggerKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Unattended => "auto",
+        }
+    }
+}
+
 /// The caller holds the gate (`take_gate`) for this and for any fallback that follows.
 pub async fn install(
     update: &Update,
     on_event: impl Fn(DownloadEvent) + Sync,
     cancel: &CancellationToken,
+    trigger: TriggerKind,
 ) -> Result<Outcome> {
     let mut connection = match Connection::connect().await {
         Ok(connection) => connection,
@@ -416,7 +524,7 @@ pub async fn install(
 
     let mut connection = Connection::connect().await?;
     let trigger = Trigger {
-        kind: "manual".into(),
+        kind: trigger.as_str().into(),
         client_version: env!("CARGO_PKG_VERSION").into(),
     };
     #[cfg(target_os = "macos")]
