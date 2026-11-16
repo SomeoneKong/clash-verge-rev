@@ -313,6 +313,7 @@ const CONTROL_PLANE_KEYS: &[&str] = &[
     "external-controller-pipe",
     "external-controller-cors",
     "secret",
+    "process-managed",
     "mixed-port",
     "socks-port",
     "port",
