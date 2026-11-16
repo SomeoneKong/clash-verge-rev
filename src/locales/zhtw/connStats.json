@@ -1,0 +1,62 @@
+{
+  "title": "彙總",
+  "recording": "記錄統計",
+  "active": "活躍",
+  "closedAt": "關閉於 {{time}}",
+  "other": "其他",
+  "ranges": {
+    "active": "目前活躍",
+    "m5": "最近 5 分鐘",
+    "m15": "最近 15 分鐘",
+    "m30": "最近 30 分鐘",
+    "today": "今天",
+    "h24": "最近 24 小時",
+    "d7": "最近 7 天"
+  },
+  "dimensions": {
+    "target": "主機",
+    "process": "程序",
+    "chain": "鏈路",
+    "exit": "出口節點",
+    "rule": "規則",
+    "source": "來源",
+    "inbound": "入站",
+    "network": "網路"
+  },
+  "drill": {
+    "none": "不下鑽",
+    "by": "按{{dimension}}下鑽"
+  },
+  "columns": {
+    "conns": "連線數",
+    "download": "下載",
+    "upload": "上傳",
+    "downloadSpeed": "下載速度",
+    "uploadSpeed": "上傳速度"
+  },
+  "notes": {
+    "recentTotals": "統計這段時間內仍活躍或在這段時間內關閉的連線，流量是這些連線自建立以來的合計，不只是這段時間內傳輸的量；按小時的範圍統計的是每個小時內的流量。",
+    "oldCore": "內核不記錄已關閉的連線：只統計本頁打開期間看到的連線。",
+    "recentMissing": "不完整：這段時間開頭關閉的部分連線已被丟棄，或內核在這段時間內重啟過。",
+    "recentReading": "正在從內核讀取已關閉的連線……",
+    "enableToRecord": "開啟“記錄統計”後按小時保存連線統計；目前還沒有記錄。"
+  },
+  "coverage": {
+    "unknown": "{{count}} 小時覆蓋未知",
+    "not_recorded": "{{count}} 小時未記錄",
+    "gap": "{{count}} 小時不完整",
+    "pending": "{{count}} 小時仍在採集",
+    "not_counted": "{{count}} 小時內核未計數",
+    "partly_counted": "{{count}} 小時內核部分時間未計數",
+    "partlyRecorded": "{{count}} 小時部分時間未記錄",
+    "separator": "；"
+  },
+  "status": {
+    "settingLost": "連線統計的狀態檔案遺失，記錄已關閉；如需繼續記錄，請重新開啟。",
+    "applying": "正在把記錄開關套用到內核……"
+  },
+  "clear": {
+    "title": "清除連線統計",
+    "confirm": "刪除本機保存的全部連線統計？此操作無法復原。"
+  }
+}

@@ -15,6 +15,7 @@ import type {
   ProfileSelection,
   ProfilePatch,
   ProfileCreate,
+  ConnQuery,
   UsageQuery,
   LoginProfile,
   HistoryQuery,
@@ -563,4 +564,29 @@ export async function loginNode(
 
 export async function logoutNode(name: string, instance: string) {
   return commands.logoutNode(name, instance)
+}
+
+export type {
+  ConnDimension,
+  ConnGroup,
+  ConnQuery,
+  ConnReport,
+  ConnStatsStatus,
+  Coverage as ConnCoverage,
+} from './bindings'
+
+export async function getConnectionStatsStatus() {
+  return commands.getConnectionStatsStatus()
+}
+
+export async function setConnectionStats(enabled: boolean) {
+  return commands.setConnectionStats(enabled)
+}
+
+export async function queryConnectionStats(query: ConnQuery) {
+  return commands.queryConnectionStats(query)
+}
+
+export async function clearConnectionStats() {
+  return commands.clearConnectionStats()
 }

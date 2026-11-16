@@ -1,0 +1,62 @@
+{
+  "title": "聚合",
+  "recording": "记录统计",
+  "active": "活跃",
+  "closedAt": "关闭于 {{time}}",
+  "other": "其他",
+  "ranges": {
+    "active": "当前活跃",
+    "m5": "最近 5 分钟",
+    "m15": "最近 15 分钟",
+    "m30": "最近 30 分钟",
+    "today": "今天",
+    "h24": "最近 24 小时",
+    "d7": "最近 7 天"
+  },
+  "dimensions": {
+    "target": "主机",
+    "process": "进程",
+    "chain": "链路",
+    "exit": "出口节点",
+    "rule": "规则",
+    "source": "来源",
+    "inbound": "入站",
+    "network": "网络"
+  },
+  "drill": {
+    "none": "不下钻",
+    "by": "按{{dimension}}下钻"
+  },
+  "columns": {
+    "conns": "连接数",
+    "download": "下载",
+    "upload": "上传",
+    "downloadSpeed": "下载速度",
+    "uploadSpeed": "上传速度"
+  },
+  "notes": {
+    "recentTotals": "统计这段时间内仍活跃或在这段时间内关闭的连接，流量是这些连接自建立以来的合计，不只是这段时间内传输的量；按小时的范围统计的是每个小时内的流量。",
+    "oldCore": "内核不记录已关闭的连接：只统计本页打开期间看到的连接。",
+    "recentMissing": "不完整：这段时间开头关闭的部分连接已被丢弃，或内核在这段时间内重启过。",
+    "recentReading": "正在从内核读取已关闭的连接……",
+    "enableToRecord": "开启“记录统计”后按小时保存连接统计；目前还没有记录。"
+  },
+  "coverage": {
+    "unknown": "{{count}} 小时覆盖未知",
+    "not_recorded": "{{count}} 小时未记录",
+    "gap": "{{count}} 小时不完整",
+    "pending": "{{count}} 小时仍在采集",
+    "not_counted": "{{count}} 小时内核未计数",
+    "partly_counted": "{{count}} 小时内核部分时间未计数",
+    "partlyRecorded": "{{count}} 小时部分时间未记录",
+    "separator": "；"
+  },
+  "status": {
+    "settingLost": "连接统计的状态文件丢失，记录已关闭；如需继续记录，请重新开启。",
+    "applying": "正在把记录开关应用到内核……"
+  },
+  "clear": {
+    "title": "清除连接统计",
+    "confirm": "删除本机保存的全部连接统计？此操作无法撤销。"
+  }
+}

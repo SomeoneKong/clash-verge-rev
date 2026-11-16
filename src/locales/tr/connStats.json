@@ -1,0 +1,62 @@
+{
+  "title": "Aggregate",
+  "recording": "Record stats",
+  "active": "Active",
+  "closedAt": "Closed {{time}}",
+  "other": "Others",
+  "ranges": {
+    "active": "Active now",
+    "m5": "Last 5 minutes",
+    "m15": "Last 15 minutes",
+    "m30": "Last 30 minutes",
+    "today": "Today",
+    "h24": "Last 24 hours",
+    "d7": "Last 7 days"
+  },
+  "dimensions": {
+    "target": "Host",
+    "process": "Process",
+    "chain": "Chain",
+    "exit": "Exit node",
+    "rule": "Rule",
+    "source": "Source",
+    "inbound": "Inbound",
+    "network": "Network"
+  },
+  "drill": {
+    "none": "No breakdown",
+    "by": "Break down by {{dimension}}"
+  },
+  "columns": {
+    "conns": "Connections",
+    "download": "Download",
+    "upload": "Upload",
+    "downloadSpeed": "DL speed",
+    "uploadSpeed": "UL speed"
+  },
+  "notes": {
+    "recentTotals": "Counts the connections active in the period or closed in it, with all their traffic since they opened, not only the traffic of the period. The hourly ranges show the traffic of each hour.",
+    "oldCore": "The core does not record closed connections: only those seen while this page is open are counted.",
+    "recentMissing": "Incomplete: connections closed early in the period were dropped, or the core restarted within it.",
+    "recentReading": "Reading the closed connections from the core…",
+    "enableToRecord": "Turn on recording to keep connection stats by hour; nothing was recorded yet."
+  },
+  "coverage": {
+    "unknown": "{{count}} h of unknown coverage",
+    "not_recorded": "{{count}} h not recorded",
+    "gap": "{{count}} h incomplete",
+    "pending": "{{count}} h still being collected",
+    "not_counted": "{{count}} h the core did not count",
+    "partly_counted": "{{count}} h counted only in part",
+    "partlyRecorded": "{{count}} h recorded only in part",
+    "separator": "; "
+  },
+  "status": {
+    "settingLost": "The connection stats state was lost, so recording was turned off. Turn it on again to go on recording.",
+    "applying": "Applying the recording switch to the core…"
+  },
+  "clear": {
+    "title": "Clear connection stats",
+    "confirm": "Delete all connection stats kept on this device? This cannot be undone."
+  }
+}
