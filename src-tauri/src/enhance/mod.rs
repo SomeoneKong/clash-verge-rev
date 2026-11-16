@@ -314,6 +314,7 @@ const CONTROL_PLANE_KEYS: &[&str] = &[
     "external-controller-cors",
     "secret",
     "process-managed",
+    "connection-stats",
     "mixed-port",
     "socks-port",
     "port",
@@ -932,7 +933,11 @@ pub async fn enhance(
 
     let config = apply_builtin_scripts(config, clash_core, enable_builtin);
     let config = use_tun(config, enable_tun);
-    let (config, dns_settings) = apply_dns_settings(config, enable_dns_settings).await;
+    let (mut config, dns_settings) = apply_dns_settings(config, enable_dns_settings).await;
+    config.insert(
+        "connection-stats".into(),
+        crate::core::connection_stats::recording().into(),
+    );
 
     let authoritative = AuthoritativeFields::capture(&config, &gui_tun_keys, dns_settings);
 
