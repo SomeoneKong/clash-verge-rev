@@ -4,7 +4,14 @@ use std::collections::{HashMap, HashSet};
 
 use crate::enhance::field::use_keys;
 
-const PATCH_CONFIG_INNER: [&str; 5] = ["allow-lan", "ipv6", "log-level", "unified-delay", "tunnels"];
+const PATCH_CONFIG_INNER: [&str; 6] = [
+    "allow-lan",
+    "ipv6",
+    "log-level",
+    "unified-delay",
+    "tunnels",
+    "connection-stats",
+];
 
 #[derive(Default, Clone)]
 pub struct IRuntime {

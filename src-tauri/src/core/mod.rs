@@ -1,6 +1,7 @@
 pub mod auto_backup;
 pub mod autostart;
 pub mod backup;
+pub mod connection_stats;
 pub mod fork_updater;
 pub mod hotkey;
 pub mod lightweight;
