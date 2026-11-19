@@ -24,8 +24,6 @@ export const MiscViewer = forwardRef<DialogRef>((props, ref) => {
     appLogLevel: 'warn',
     appLogMaxSize: 8,
     appLogMaxCount: 12,
-    autoCloseConnection: true,
-    autoCheckUpdate: true,
     enableBuiltinEnhanced: true,
     proxyLayoutColumn: 6,
     enableAutoDelayDetection: false,
@@ -42,8 +40,6 @@ export const MiscViewer = forwardRef<DialogRef>((props, ref) => {
         appLogLevel: verge?.app_log_level ?? 'warn',
         appLogMaxSize: verge?.app_log_max_size ?? 128,
         appLogMaxCount: verge?.app_log_max_count ?? 8,
-        autoCloseConnection: verge?.auto_close_connection ?? true,
-        autoCheckUpdate: verge?.auto_check_update ?? true,
         enableBuiltinEnhanced: verge?.enable_builtin_enhanced ?? true,
         proxyLayoutColumn: verge?.proxy_layout_column || 6,
         enableAutoDelayDetection: verge?.enable_auto_delay_detection ?? false,
@@ -63,8 +59,6 @@ export const MiscViewer = forwardRef<DialogRef>((props, ref) => {
         app_log_level: values.appLogLevel,
         app_log_max_size: values.appLogMaxSize,
         app_log_max_count: values.appLogMaxCount,
-        auto_close_connection: values.autoCloseConnection,
-        auto_check_update: values.autoCheckUpdate,
         enable_builtin_enhanced: values.enableBuiltinEnhanced,
         proxy_layout_column: values.proxyLayoutColumn,
         enable_auto_delay_detection: values.enableAutoDelayDetection,
@@ -176,38 +170,6 @@ export const MiscViewer = forwardRef<DialogRef>((props, ref) => {
                 ),
               },
             }}
-          />
-        </ListItem>
-
-        <ListItem sx={{ padding: '5px 2px' }}>
-          <ListItemText
-            primary={t('settings.modals.misc.fields.autoCloseConnections')}
-            sx={{ maxWidth: 'fit-content' }}
-          />
-          <TooltipIcon
-            title={t('settings.modals.misc.tooltips.autoCloseConnections')}
-            sx={{ opacity: '0.7' }}
-          />
-          <Switch
-            edge="end"
-            checked={values.autoCloseConnection}
-            onChange={(_, c) =>
-              setValues((v) => ({ ...v, autoCloseConnection: c }))
-            }
-            sx={{ marginLeft: 'auto' }}
-          />
-        </ListItem>
-
-        <ListItem sx={{ padding: '5px 2px' }}>
-          <ListItemText
-            primary={t('settings.modals.misc.fields.autoCheckUpdate')}
-          />
-          <Switch
-            edge="end"
-            checked={values.autoCheckUpdate}
-            onChange={(_, c) =>
-              setValues((v) => ({ ...v, autoCheckUpdate: c }))
-            }
           />
         </ListItem>
 

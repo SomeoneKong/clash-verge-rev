@@ -67,6 +67,8 @@ export const translationKeys = [
   'connStats.clear.confirm',
   'connStats.setting.title',
   'connStats.setting.tooltip',
+  'forkSettings.autoCloseConnections.title',
+  'forkSettings.autoCloseConnections.tooltip',
   'home.page.tooltips.lightweightMode',
   'home.page.tooltips.manual',
   'home.page.tooltips.settings',

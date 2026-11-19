@@ -102,6 +102,12 @@ export interface TranslationResources {
       }
       title: string
     }
+    forkSettings: {
+      autoCloseConnections: {
+        title: string
+        tooltip: string
+      }
+    }
     home: {
       components: {
         clashInfo: {

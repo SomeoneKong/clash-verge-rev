@@ -28,6 +28,7 @@ import { MiscViewer } from './mods/misc-viewer'
 import { SettingItem, SettingList } from './mods/setting-comp'
 import { ThemeViewer } from './mods/theme-viewer'
 import { UpdateViewer } from './mods/update-viewer'
+import { AutoCheckUpdateSetting } from './mods/verge-switch-settings'
 
 interface Props {
   onError?: (err: Error) => void
@@ -133,6 +134,7 @@ const SettingVergeAdvanced = ({ onError: _ }: Props) => {
         onClick={onCheckUpdate}
         label={t('settings.components.verge.advanced.fields.checkUpdates')}
       />
+      <AutoCheckUpdateSetting />
 
       <SettingItem
         onClick={() => {

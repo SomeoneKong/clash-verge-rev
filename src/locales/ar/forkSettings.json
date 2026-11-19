@@ -1,0 +1,6 @@
+{
+  "autoCloseConnections": {
+    "title": "Close Connections on Switch",
+    "tooltip": "Close established connections when a proxy group changes, pins or unpins its node, the proxy mode changes, or the system proxy is turned off; when off, these only affect new connections"
+  }
+}

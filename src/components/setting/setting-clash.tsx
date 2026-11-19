@@ -28,6 +28,7 @@ import { useNodeLoginAttention } from './mods/node-login'
 import { NodeLoginViewer } from './mods/node-login-viewer'
 import { SettingItem, SettingList } from './mods/setting-comp'
 import { TunnelsViewer } from './mods/tunnels-viewer'
+import { AutoCloseConnectionSetting } from './mods/verge-switch-settings'
 import { WebUIViewer } from './mods/web-ui-viewer'
 
 const isWIN = getSystem() === 'windows'
@@ -371,6 +372,7 @@ const SettingClash = ({ onError }: Props) => {
         onClick={() => nodeLoginRef.current?.open()}
       />
 
+      <AutoCloseConnectionSetting />
       <ConnectionStatsSetting />
     </SettingList>
   )
