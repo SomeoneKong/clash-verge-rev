@@ -64,5 +64,9 @@
     "displayUnknown": "无法确定内核 {{instance}} 是否提供显示信息",
     "lost": "内核 {{instance}} 已结束，有 {{count}} 条记录未保存，已无法补采",
     "tailAt": "内核 {{instance}} 在 {{time}} 最后一次采集，之后的记录未知"
+  },
+  "pin": {
+    "pinned": "已固定 {{name}}",
+    "inactive": "已固定 {{name}}，它当前不可用，暂由 {{now}} 承载"
   }
 }

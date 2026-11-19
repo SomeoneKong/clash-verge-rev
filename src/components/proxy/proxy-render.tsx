@@ -21,7 +21,11 @@ import { useVerge } from '@/hooks/use-verge'
 import { useThemeMode } from '@/services/states'
 import type { ResolvedProxyMember } from '@/types/proxy-view'
 
-import { GroupStrategy, GroupStrategyLine } from './probe-elements'
+import {
+  GroupPinMark,
+  GroupStrategy,
+  GroupStrategyLine,
+} from './probe-elements'
 import { MemberStrategyRow } from './probe-member-row'
 import { ProxyGroupHeaderBlock } from './proxy-group-header-block'
 import { ProxyGroupTools } from './proxy-group-tools'
@@ -146,6 +150,7 @@ export const ProxyRender = memo(function ProxyRender(props: RenderProps) {
                   {group.now}
                 </StyledSubtitle>
               </Box>
+              <GroupPinMark fixed={group.fixed} now={group.now} />
               <GroupStrategyLine name={group.name} />
             </Box>
           }

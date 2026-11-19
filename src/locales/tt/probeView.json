@@ -64,5 +64,9 @@
     "displayUnknown": "Whether core {{instance}} provides a display is unknown",
     "lost": "Core {{instance}} ended with {{count}} records not saved; they can no longer be collected",
     "tailAt": "Core {{instance}} was last collected at {{time}}; what it recorded after is unknown"
+  },
+  "pin": {
+    "pinned": "Pinned to {{name}}",
+    "inactive": "Pinned to {{name}}, which is unavailable now; {{now}} carries the traffic meanwhile"
   }
 }

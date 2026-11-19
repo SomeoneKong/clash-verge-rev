@@ -64,5 +64,9 @@
     "displayUnknown": "無法確定核心 {{instance}} 是否提供顯示資訊",
     "lost": "核心 {{instance}} 已結束，有 {{count}} 筆記錄未儲存，已無法補採",
     "tailAt": "核心 {{instance}} 在 {{time}} 最後一次採集，之後的記錄未知"
+  },
+  "pin": {
+    "pinned": "已固定 {{name}}",
+    "inactive": "已固定 {{name}}，它目前不可用，暫由 {{now}} 承載"
   }
 }

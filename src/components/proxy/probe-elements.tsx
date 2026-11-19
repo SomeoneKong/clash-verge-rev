@@ -1,4 +1,4 @@
-import { Alert, Box, Chip, Typography } from '@mui/material'
+import { Alert, Box, Chip, Tooltip, Typography } from '@mui/material'
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -135,6 +135,41 @@ export const ProbeSections = ({ sections }: { sections: ProbeSection[] }) => {
 
 /** The headline of the strategy of a group and its history, in the header of the group,
  * folded or not. */
+/** The pin of a group on its header, open or collapsed; dimmed while the pinned member does not carry. */
+export const GroupPinMark = ({
+  fixed,
+  now,
+}: {
+  fixed?: string | null
+  now?: string | null
+}) => {
+  const { t } = useTranslation()
+  if (!fixed) return null
+  const carries = fixed === now
+  return (
+    <Tooltip
+      arrow
+      title={
+        carries
+          ? t('probeView.pin.pinned', { name: fixed })
+          : t('probeView.pin.inactive', { name: fixed, now })
+      }
+    >
+      <Box
+        component="span"
+        sx={{
+          ml: 0.5,
+          fontSize: 12,
+          flexShrink: 0,
+          filter: carries ? undefined : 'grayscale(1)',
+        }}
+      >
+        📌
+      </Box>
+    </Tooltip>
+  )
+}
+
 export const GroupStrategyLine = ({ name }: { name: string }) => {
   const { t, i18n } = useTranslation()
   const { groups, openHistory } = useProbeView()

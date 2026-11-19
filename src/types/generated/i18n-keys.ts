@@ -318,6 +318,8 @@ export const translationKeys = [
   'probeView.coverage.displayUnknown',
   'probeView.coverage.lost',
   'probeView.coverage.tailAt',
+  'probeView.pin.pinned',
+  'probeView.pin.inactive',
   'profiles.page.actions.updateAll',
   'profiles.page.actions.viewRuntimeConfig',
   'profiles.page.actions.reactivate',
