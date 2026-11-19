@@ -464,6 +464,10 @@ export interface TranslationResources {
       mode: {
         strategy: string
       }
+      pin: {
+        inactive: string
+        pinned: string
+      }
       ranges: {
         '1h': string
         '24h': string
