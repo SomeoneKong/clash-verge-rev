@@ -13,9 +13,12 @@ use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use tauri_plugin_updater::{Update, UpdaterExt as _};
+use tauri_plugin_updater::Update;
 use tokio::sync::{Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
+
+pub(crate) mod automatic;
+pub(crate) mod interface;
 
 pub enum Outcome {
     /// Installed; the caller restarts into the new version.
@@ -78,10 +81,22 @@ async fn hello(connection: &mut Connection) -> Result<Hello> {
     }
 }
 
-/// The component's view, or `None` where it cannot be reached.
+async fn connect_component() -> Result<(Connection, Hello)> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut connection = Connection::connect().await?;
+        let status = hello(&mut connection).await?;
+        Ok((connection, status))
+    })
+    .await
+    .context("the update component timed out")?
+}
+
+async fn component_hello() -> Result<Hello> {
+    Ok(connect_component().await?.1)
+}
+
 async fn status() -> Option<Hello> {
-    let mut connection = Connection::connect().await.ok()?;
-    hello(&mut connection).await.ok()
+    component_hello().await.ok()
 }
 
 /// Whether updates go through the component on this machine.
@@ -191,34 +206,86 @@ pub(crate) async fn confirm_core(txn: &str, ok: bool) -> Result<TxnView> {
 pub async fn resolve_at_startup() {
     // A core upgrade still changing files is waited for, and one left to this app to confirm is
     // confirmed once the core runs.
-    crate::feat::settle_core_upgrade_at_startup().await;
-    let Some(status) = status().await else {
-        return;
-    };
-    if let Some(txn) = &status.current {
-        if txn.kind == Kind::Core {
+    let attempted = automatic::settle_previous().await.unwrap_or_else(|error| {
+        logging!(warn, Type::System, "Settling the automatic update: {error:#}");
+        true
+    });
+    let (handled, initial) = resolve_current(status().await, false).await;
+    let status = if handled { initial } else { status().await };
+    let installed = status
+        .as_ref()
+        .and_then(|h| h.installed_version.as_deref())
+        .unwrap_or(env!("CARGO_PKG_VERSION"));
+    if !attempted && let Err(error) = automatic::installed(installed) {
+        logging!(warn, Type::System, "Clearing the installed candidate: {error:#}");
+    }
+    if let Some(hello) = status {
+        if hello.current.is_some() {
+            if !handled {
+                resolve_current(Some(hello), false).await;
+            }
             return;
         }
+        if hello.staged || resolve_existing(&hello, repair_attempted).await {
+            return;
+        }
+    }
+    if !attempted
+        && !handled
+        && let Err(error) = automatic::startup().await
+    {
+        logging!(warn, Type::System, "Automatic update: {error:#}");
+    }
+}
+
+async fn resolve_current(initial: Option<Hello>, require_idle: bool) -> (bool, Option<Hello>) {
+    let (core, status) = crate::feat::settle_core_upgrade_at_startup(initial, status, require_idle).await;
+    if let Some(txn) = status
+        .as_ref()
+        .and_then(|h| h.current.as_ref())
+        .filter(|t| t.kind != Kind::Core)
+    {
         // The bundle phase of this user's update interrupted here is finished or given up first;
         // the app starts once that update has ended.
         #[cfg(target_os = "macos")]
         if macos::own_user_phase(txn) && macos::resume(txn).await {
-            return;
+            return (true, status);
         }
-        logging!(
-            warn,
-            Type::System,
-            "Update v{} is being applied, not starting",
-            txn.version
-        );
-        std::process::exit(0);
+        leave_for_app_update(&txn.version);
     }
-    let Some(pending) = status.needs_repair else {
-        return;
+    (core, status)
+}
+
+fn leave_for_app_update(version: &str) -> ! {
+    logging!(warn, Type::System, "Update v{version} is being applied, not starting");
+    std::process::exit(0)
+}
+
+fn repair_busy_status(previous: &Hello, latest: Option<Hello>, current: TxnView) -> Option<Hello> {
+    latest.or_else(|| {
+        let TxnView::Running(txn) = current else {
+            return None;
+        };
+        let mut observed = previous.clone();
+        observed.current = Some(txn);
+        Some(observed)
+    })
+}
+
+async fn resolve_active_update(id: &str, kind: Kind, version: &str) -> clash_verge_updater::automatic::Settlement {
+    if kind == Kind::Full {
+        leave_for_app_update(version);
+    }
+    automatic::track_transaction(id).await
+}
+
+async fn resolve_existing(status: &Hello, attempted: fn(&str) -> bool) -> bool {
+    let Some(pending) = &status.needs_repair else {
+        return false;
     };
-    if !repairable_here(&pending) || repair_attempted(&pending.version) {
+    if !repairable_here(pending) || attempted(&pending.version) {
         logging!(warn, Type::System, "Update v{} still needs repair", pending.version);
-        return;
+        return false;
     }
     logging!(
         warn,
@@ -227,7 +294,7 @@ pub async fn resolve_at_startup() {
         pending.version
     );
     let repaired = match take_gate() {
-        Ok(_gate) => repair(&pending, None, true).await,
+        Ok(_gate) => repair(pending, None, true).await,
         Err(error) => Err(error),
     };
     match repaired {
@@ -235,14 +302,21 @@ pub async fn resolve_at_startup() {
         Ok(Outcome::Applied) if pending.kind == Kind::Bundle => {}
         Ok(Outcome::Applied) => crate::feat::restart_after_update().await,
         Ok(_) => {}
-        Err(error) => {
-            logging!(error, Type::System, "Repairing v{} failed: {error:#}", pending.version);
-            // A repair whose end is not known may still run.
-            if update_in_progress() {
-                std::process::exit(0);
+        Err(error) => match error.downcast::<RepairBusy>() {
+            Ok(RepairBusy(current)) => {
+                let latest = repair_busy_status(status, component_status().await, current);
+                resolve_current(latest, true).await;
             }
-        }
+            Err(error) => {
+                logging!(error, Type::System, "Repairing v{} failed: {error:#}", pending.version);
+                // A repair whose end is not known may still run.
+                if update_in_progress() {
+                    std::process::exit(0);
+                }
+            }
+        },
     }
+    true
 }
 
 fn repair_marker() -> Option<std::path::PathBuf> {
@@ -289,7 +363,7 @@ impl WindowAfterUpdate {
         Self::ask(hide_marker(), show_marker())
     }
 
-    fn ask(marker: Option<std::path::PathBuf>, other: Option<std::path::PathBuf>) -> Self {
+    pub(super) fn ask(marker: Option<std::path::PathBuf>, other: Option<std::path::PathBuf>) -> Self {
         if let Some(other) = other {
             let _ = std::fs::remove_file(other);
         }
@@ -298,7 +372,9 @@ impl WindowAfterUpdate {
 
     /// Keeps the request for the restart that follows.
     pub fn keep(mut self) {
-        self.0 = None;
+        if let Some(marker) = self.0.take() {
+            let _ = std::fs::write(marker, "");
+        }
     }
 }
 
@@ -348,18 +424,49 @@ fn installed_fingerprint() -> Option<String> {
     Some(text.trim().to_owned())
 }
 
-fn choose(update: &Update) -> Option<PayloadEntry> {
-    let platform = Platform::current()?;
-    let payloads: PlatformPayloads =
-        serde_json::from_value(update.raw_json["fork"]["payloads"][platform.key()].clone()).ok()?;
-    match platform {
+fn choose(raw_json: &serde_json::Value) -> Option<(Kind, PayloadEntry)> {
+    checked_payload(raw_json).ok().flatten()
+}
+
+fn release_is_test(raw: &serde_json::Value) -> Result<bool> {
+    let Some(fork) = raw.get("fork") else { return Ok(false) };
+    let fork = fork.as_object().context("invalid fork metadata")?;
+    fork.get("test")
+        .map(|v| v.as_bool().context("invalid fork.test"))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+fn checked_payload(raw: &serde_json::Value) -> Result<Option<(Kind, PayloadEntry)>> {
+    let Some(platform) = Platform::current() else {
+        return Ok(None);
+    };
+    let Some(fork) = raw.get("fork") else { return Ok(None) };
+    let fork = fork.as_object().context("invalid fork metadata")?;
+    let Some(payloads) = fork.get("payloads") else {
+        return Ok(None);
+    };
+    let Some(entry) = payloads
+        .as_object()
+        .context("invalid fork.payloads")?
+        .get(platform.key())
+    else {
+        return Ok(None);
+    };
+    anyhow::ensure!(entry.is_object(), "invalid platform payloads");
+    let payloads: PlatformPayloads = serde_json::from_value(entry.clone())?;
+    Ok(match platform {
         Platform::WindowsX86_64 => {
             let same_layout = installed_fingerprint().is_some_and(|installed| payloads.fingerprint == Some(installed));
-            if same_layout { payloads.patch } else { payloads.full }
+            if same_layout && let Some(patch) = payloads.patch {
+                Some((Kind::Patch, patch))
+            } else {
+                payloads.full.map(|p| (Kind::Full, p))
+            }
         }
-        Platform::LinuxX86_64 | Platform::LinuxAarch64 => payloads.deb,
-        Platform::DarwinAarch64 => payloads.bundle,
-    }
+        Platform::LinuxX86_64 | Platform::LinuxAarch64 => payloads.deb.map(|p| (Kind::Deb, p)),
+        Platform::DarwinAarch64 => payloads.bundle.map(|p| (Kind::Bundle, p)),
+    })
 }
 
 /// On macOS only the app of the version awaiting repair can repair it: the bundle is the user's,
@@ -368,7 +475,7 @@ fn repairable_here(pending: &Finished) -> bool {
     pending.kind != Kind::Bundle || pending.version == env!("CARGO_PKG_VERSION")
 }
 
-async fn report_fallback(version: &str, reason: &str) {
+pub(super) async fn report_fallback(version: &str, reason: &str) {
     if let Ok(mut connection) = Connection::connect().await {
         let claim = serde_json::json!({ "event": "fallback", "version": version, "reason": reason });
         let _ = connection.request(&Request::Report { claim }).await;
@@ -377,9 +484,8 @@ async fn report_fallback(version: &str, reason: &str) {
 
 /// The app's own updater may take over only when nothing is being applied.
 fn fallback_unless_running(error: &anyhow::Error) -> Result<Outcome> {
-    if update_in_progress() {
-        bail!("an update is already in progress");
-    }
+    let state = client::read_state().context("unable to confirm the update component's state")?;
+    anyhow::ensure!(state.txn.is_none(), "an update is already in progress");
     Ok(Outcome::Fallback(format!("{error:#}")))
 }
 
@@ -387,12 +493,99 @@ fn fallback_unless_running(error: &anyhow::Error) -> Result<Outcome> {
 pub const UNATTENDED_FLAG: &str = "--update-unattended";
 
 pub fn unattended_requested() -> bool {
-    std::env::args().skip(1).any(|arg| arg == UNATTENDED_FLAG)
+    std::env::args_os().skip(1).any(|arg| arg == UNATTENDED_FLAG)
+}
+
+pub(crate) fn restart_updated_binary() -> ! {
+    use crate::core::handle::Handle;
+    use tauri::Manager as _;
+    Handle::global().set_is_exiting();
+    let app = Handle::app_handle();
+    if unattended_requested() {
+        let mut env = app.env();
+        remove_unattended_arg(&mut env.args_os);
+        app.cleanup_before_exit();
+        tauri::process::restart(&env);
+    }
+    app.restart()
+}
+
+fn remove_unattended_arg(args: &mut Vec<std::ffi::OsString>) {
+    args.retain(|arg| arg != UNATTENDED_FLAG);
+}
+
+#[cfg(test)]
+#[test]
+fn update_restart_preserves_other_arguments() {
+    use std::ffi::OsString;
+    let mut args = ["clash-verge", "--update-unattended", "a path", "--update-unattended"]
+        .map(OsString::from)
+        .to_vec();
+    remove_unattended_arg(&mut args);
+    assert_eq!(args, ["clash-verge", "a path"].map(OsString::from));
+}
+
+static UNATTENDED_READY: parking_lot::Mutex<bool> = parking_lot::const_mutex(false);
+
+fn app_local_dir() -> Result<std::path::PathBuf> {
+    ::dirs::data_local_dir()
+        .map(|dir| dir.join(crate::utils::dirs::APP_ID))
+        .ok_or_else(|| anyhow::anyhow!("Local application data directory is unavailable"))
+}
+
+fn queued_command() -> Result<std::path::PathBuf> {
+    Ok(app_local_dir()?.join("update-unattended.pending"))
+}
+
+pub(crate) fn forward_unattended() -> Result<()> {
+    if !queue_during_startup(&UNATTENDED_READY, &queued_command()?)? {
+        crate::process::AsyncHandler::spawn(update_unattended);
+    }
+    Ok(())
+}
+
+fn queue_during_startup(ready: &parking_lot::Mutex<bool>, path: &std::path::Path) -> Result<bool> {
+    let ready = ready.lock();
+    if *ready {
+        return Ok(false);
+    }
+    std::fs::create_dir_all(path.parent().context("no command directory")?)?;
+    clash_verge_updater::state::write_atomic(path, b"")?;
+    drop(ready);
+    Ok(true)
+}
+
+fn take_queued_command(ready: &parking_lot::Mutex<bool>, path: &std::path::Path) -> Result<bool> {
+    let mut ready = ready.lock();
+    let result = std::fs::remove_file(path);
+    *ready = result.is_err();
+    drop(ready);
+    match result {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub(crate) async fn run_startup_commands() {
+    if unattended_requested() && automatic::take_startup_command() {
+        update_unattended().await;
+    }
+    loop {
+        match queued_command().and_then(|p| take_queued_command(&UNATTENDED_READY, &p)) {
+            Ok(true) => update_unattended().await,
+            Ok(false) => break,
+            Err(error) => {
+                logging!(warn, Type::System, "Reading the queued update command: {error:#}");
+                break;
+            }
+        }
+    }
 }
 
 /// Updates to the version offered, if any, without asking anyone and without showing the window
 /// before or after. Only through the update component: the installer the app falls back to
-/// otherwise asks for elevation. A version marked as breaking is left for the user.
+/// otherwise asks for elevation. On macOS, replacing a non-writable bundle still needs authorization.
 pub async fn update_unattended() {
     if let Err(error) = try_update_unattended().await {
         logging!(warn, Type::System, "Unattended update: {error:#}");
@@ -404,29 +597,25 @@ async fn try_update_unattended() -> Result<()> {
     if !available().await {
         bail!("the update component is not available");
     }
-    let Some(update) = super::handle::Handle::app_handle().updater()?.check().await? else {
+    let Some(update) =
+        super::updater::SilentUpdater::check(super::handle::Handle::app_handle(), &CancellationToken::new()).await?
+    else {
         logging!(info, Type::System, "Unattended update: no update available");
         return Ok(());
     };
-    if update
-        .body
-        .as_ref()
-        .is_some_and(|body| body.to_lowercase().contains("break change"))
-    {
+    if automatic::skip_test(&update)? {
         logging!(
             info,
             Type::System,
-            "Unattended update: v{} has breaking changes, left for the user",
+            "Unattended update: skipping test release v{}",
             update.version
         );
         return Ok(());
     }
     logging!(info, Type::System, "Unattended update: installing v{}", update.version);
-    // Set before installing: a full update leaves without returning.
-    let hidden = WindowAfterUpdate::hide();
     match install(&update, |_| {}, &CancellationToken::new(), TriggerKind::Unattended).await? {
         Outcome::Applied => {
-            hidden.keep();
+            WindowAfterUpdate::hide().keep();
             drop(gate);
             crate::feat::restart_after_update().await;
         }
@@ -451,12 +640,33 @@ pub enum TriggerKind {
 }
 
 impl TriggerKind {
+    fn window(self) -> WindowAfterUpdate {
+        match self {
+            Self::Manual => WindowAfterUpdate::show(),
+            Self::Unattended => WindowAfterUpdate::hide(),
+        }
+    }
+
     const fn as_str(self) -> &'static str {
         match self {
             Self::Manual => "manual",
             Self::Unattended => "auto",
         }
     }
+}
+
+fn repair_before_install(status: &Hello, trigger: TriggerKind) -> Option<&Finished> {
+    status
+        .needs_repair
+        .as_ref()
+        .filter(|p| matches!(trigger, TriggerKind::Manual) && repairable_here(p))
+}
+
+fn install_busy(status: &Hello, trigger: TriggerKind) -> bool {
+    let can_restage = matches!(trigger, TriggerKind::Manual)
+        && status.staged_by_caller
+        && repair_before_install(status, trigger).is_none();
+    status.current.is_some() || (status.staged && !can_restage)
 }
 
 /// The caller holds the gate (`take_gate`) for this and for any fallback that follows.
@@ -466,38 +676,37 @@ pub async fn install(
     cancel: &CancellationToken,
     trigger: TriggerKind,
 ) -> Result<Outcome> {
-    let mut connection = match Connection::connect().await {
-        Ok(connection) => connection,
+    let status = match component_hello().await {
+        Ok(status) => status,
         // macOS has no installer to set the component up; this update offers it.
         #[cfg(target_os = "macos")]
-        Err(_) if choose(update).is_some() && !update_in_progress() && macos::bootstrap().await => {
-            match Connection::connect().await {
-                Ok(connection) => connection,
+        Err(_)
+            if matches!(trigger, TriggerKind::Manual)
+                && interface::bootstrap_available()
+                && choose(&update.raw_json).is_some()
+                && !update_in_progress()
+                && macos::bootstrap().await =>
+        {
+            match component_hello().await {
+                Ok(status) => status,
                 Err(error) => return fallback_unless_running(&error),
             }
         }
         Err(error) => return fallback_unless_running(&error),
     };
-    let status = match hello(&mut connection).await {
-        Ok(status) => status,
-        Err(error) => return fallback_unless_running(&error),
-    };
-    drop(connection);
-    if status.current.is_some() {
+    if install_busy(&status, trigger) {
         bail!("an update is already in progress");
     }
-    // The version that failed is repaired first; a newer one is offered again afterwards.
-    if let Some(pending) = status.needs_repair.filter(repairable_here) {
+    if let Some(pending) = repair_before_install(&status, trigger) {
         if cancel.is_cancelled() {
             return Ok(Outcome::Cancelled);
         }
         logging!(warn, Type::System, "Repairing v{} before updating", pending.version);
-        return repair(&pending, Some(cancel), false).await;
+        return repair(pending, Some(cancel), false).await;
     }
 
-    let Some(entry) = choose(update) else {
+    let Some((kind, entry)) = choose(&update.raw_json) else {
         let reason = "the release carries no payload for the update component";
-        report_fallback(&update.version, reason).await;
         return Ok(Outcome::Fallback(reason.into()));
     };
     let mut source = update.clone();
@@ -517,19 +726,22 @@ pub async fn install(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    anyhow::ensure!(digest == entry.sha256, "the payload does not match its digest");
+    anyhow::ensure!(
+        digest.eq_ignore_ascii_case(&entry.sha256),
+        "the payload does not match its digest"
+    );
     if cancel.is_cancelled() {
         return Ok(Outcome::Cancelled);
     }
 
     let mut connection = Connection::connect().await?;
-    let trigger = Trigger {
+    let stage_trigger = Trigger {
         kind: trigger.as_str().into(),
         client_version: env!("CARGO_PKG_VERSION").into(),
     };
     #[cfg(target_os = "macos")]
     let signatures = entry.signatures.clone();
-    let staged = match connection.stage(trigger, &bytes, entry.signatures).await? {
+    let staged = match connection.stage(stage_trigger, &bytes, entry.signatures).await? {
         Response::Staged(staged) => staged,
         Response::Rejected { reason } => {
             logging!(
@@ -538,7 +750,6 @@ pub async fn install(
                 "The update component refused v{}: {reason}",
                 update.version
             );
-            report_fallback(&update.version, &reason).await;
             return Ok(Outcome::Fallback(reason));
         }
         Response::Busy { .. } => bail!("an update is already in progress"),
@@ -561,8 +772,14 @@ pub async fn install(
         return Ok(Outcome::Cancelled);
     }
 
+    if !staged.matches_target(&update.version, kind, &digest) {
+        let _ = connection.request(&Request::Cancel { txn: staged.txn }).await;
+        bail!("the staged payload does not match the offered update");
+    }
+
     // The installer replaces the app, so the app leaves first and the component starts it again.
     let relaunch = staged.kind == Kind::Full;
+    let _window = trigger.window();
     let applied = connection
         .request(&Request::Apply {
             txn: staged.txn.clone(),
@@ -579,7 +796,6 @@ pub async fn install(
                 "The update component refused v{}: {reason}",
                 update.version
             );
-            report_fallback(&update.version, &reason).await;
             return Ok(Outcome::Fallback(reason));
         }
         Ok(Response::Busy { .. }) => bail!("an update is already in progress"),
@@ -647,6 +863,28 @@ async fn repairing(version: &str) -> Option<Repairing> {
     None
 }
 
+#[derive(Debug)]
+struct RepairBusy(TxnView);
+
+impl std::fmt::Display for RepairBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("an update is already in progress")
+    }
+}
+
+impl std::error::Error for RepairBusy {}
+
+fn repair_answer(answer: Response, remember: impl FnOnce()) -> Result<String> {
+    let txn = match answer {
+        Response::Txn(TxnView::Running(txn)) => Ok(txn.id),
+        Response::Rejected { reason } | Response::Error { message: reason } => Err(anyhow!(reason)),
+        Response::Busy { current } => return Err(RepairBusy(current).into()),
+        other => bail!("unexpected answer {other:?}"),
+    };
+    remember();
+    txn
+}
+
 /// Re-applies a version that needs repair from the payload the component kept.
 async fn repair(pending: &Finished, cancel: Option<&CancellationToken>, remember: bool) -> Result<Outcome> {
     let relaunch = pending.kind == Kind::Full;
@@ -658,28 +896,25 @@ async fn repair(pending: &Finished, cancel: Option<&CancellationToken>, remember
         txn: Some(pending.id.clone()),
         relaunch,
     };
+    let _window = (relaunch && !remember).then(WindowAfterUpdate::show);
     let answer = connection.request(&request).await;
     drop(connection);
-    let txn = match answer {
-        Ok(Response::Txn(TxnView::Running(txn))) => txn.id,
-        Ok(Response::Busy { .. }) => bail!("an update is already in progress"),
-        Ok(Response::Rejected { reason } | Response::Error { message: reason }) => bail!("{reason}"),
-        Ok(other) => bail!("unexpected answer {other:?}"),
-        Err(error) => match repairing(&pending.version).await {
-            Some(Repairing::Running(txn)) => txn,
-            Some(Repairing::Done) => {
-                if remember {
-                    remember_repair(&pending.version);
-                }
-                return Ok(Outcome::Applied);
-            }
-            None => return Err(error),
-        },
+    let remember = || {
+        if remember {
+            remember_repair(&pending.version);
+        }
     };
-    // Noted once the repair has started, before the app may leave for its installer.
-    if remember {
-        remember_repair(&pending.version);
-    }
+    let txn = match answer {
+        Ok(response) => repair_answer(response, remember)?,
+        Err(error) => {
+            let progress = repairing(&pending.version).await.ok_or(error)?;
+            remember();
+            match progress {
+                Repairing::Running(txn) => txn,
+                Repairing::Done => return Ok(Outcome::Applied),
+            }
+        }
+    };
     // This app is the bundle of that version already; only the privileged part is redone.
     #[cfg(target_os = "macos")]
     if pending.kind == Kind::Bundle {
@@ -706,15 +941,11 @@ async fn view(txn: &str) -> Option<TxnView> {
 
 /// Follows the transaction to its end, reconnecting when the component restarts itself.
 async fn wait_finished(txn: &str) -> Result<Outcome> {
-    let deadline = Instant::now() + Duration::from_secs(20 * 60);
-    loop {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        anyhow::ensure!(Instant::now() < deadline, "the update did not finish in time");
-        match view(txn).await {
-            None | Some(TxnView::Staged(_) | TxnView::Running(_)) => {}
-            Some(TxnView::Finished(finished)) => return outcome_of(finished),
-            Some(TxnView::Unknown) => bail!("the update component lost track of the update"),
-        }
+    use clash_verge_updater::automatic::Settlement;
+    match automatic::track_transaction(txn).await {
+        Settlement::Applied => Ok(Outcome::Applied),
+        Settlement::Failed(reason) | Settlement::Rejected(reason) | Settlement::RolledBack(reason) => bail!("{reason}"),
+        outcome => bail!("the update ended without confirmed success: {outcome:?}"),
     }
 }
 
@@ -897,5 +1128,114 @@ mod macos {
             );
         }
         matches!(super::view(&txn.id).await, Some(TxnView::Finished(_)))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod startup_tests {
+    use super::*;
+
+    #[test]
+    fn a_completed_update_refreshes_its_window_request_and_abandoned_requests_expire() {
+        use std::fs::{File, create_dir, remove_dir};
+        let dir = std::env::temp_dir().join(format!("verge-update-window-{}", nanoid::nanoid!()));
+        create_dir(&dir).unwrap();
+        let stale = std::time::SystemTime::now() - Duration::from_secs(61 * 60);
+        for (marker, opposite) in [("hide", "show"), ("show", "hide")] {
+            let marker = dir.join(marker);
+            let opposite = dir.join(opposite);
+            File::create(&opposite).unwrap();
+            let request = WindowAfterUpdate::ask(Some(marker.clone()), Some(opposite.clone()));
+            assert!(!opposite.exists());
+            File::options()
+                .write(true)
+                .open(&marker)
+                .unwrap()
+                .set_modified(stale)
+                .unwrap();
+            request.keep();
+            assert!(take_request(Some(marker.clone())));
+            assert!(!take_request(Some(marker.clone())));
+            File::create(&marker).unwrap().set_modified(stale).unwrap();
+            assert!(!take_request(Some(marker)));
+        }
+        remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn forwarded_command_survives_a_startup_restart_and_is_taken_once() {
+        let dir = std::env::temp_dir().join(format!("verge-update-command-{}", nanoid::nanoid!()));
+        let path = dir.join("pending");
+        let starting = parking_lot::Mutex::new(false);
+        assert!(queue_during_startup(&starting, &path).unwrap());
+        let restarted = parking_lot::Mutex::new(false);
+        assert!(take_queued_command(&restarted, &path).unwrap());
+        assert!(!take_queued_command(&restarted, &path).unwrap());
+        assert!(!queue_during_startup(&restarted, &path).unwrap());
+        assert!(!path.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn staged_repair_conflict_requires_machine_state_when_the_component_stops_answering() {
+        let previous: Hello = serde_json::from_value(serde_json::json!({
+            "protocol": 1, "updater_version":"1", "platform":"linux-x86_64"
+        }))
+        .unwrap();
+        let staged = TxnView::Staged(Staged {
+            txn: "conflict".into(),
+            version: "2.0.0".into(),
+            kind: Kind::Core,
+            size: 1,
+            sha256: "hash".into(),
+        });
+        assert!(repair_busy_status(&previous, None, staged.clone()).is_none());
+        let mut latest = previous.clone();
+        latest.staged = true;
+        assert!(repair_busy_status(&previous, Some(latest), staged).unwrap().staged);
+    }
+
+    #[tokio::test]
+    async fn an_attempted_repair_allows_only_a_higher_automatic_candidate() {
+        let h: Hello = serde_json::from_value(serde_json::json!({
+            "protocol": 1, "updater_version":"1", "platform":"linux-x86_64",
+            "needs_repair": {"id":"a","version":"2.0.0","kind":"deb","outcome":"needs_repair","finished_at":"now",
+                "initiator":{"user":"u","id":"u","pid":1}}
+        }))
+        .unwrap();
+        let remembered = std::cell::Cell::new(false);
+        for (kind, phase) in [("core", "applying"), ("core", "published"), ("full", "applying")] {
+            let current = serde_json::from_value(serde_json::json!({
+                "state":"running","id":"conflict","version":"2.0.0","kind":kind,"phase":phase,
+                "initiator":{"id":"user","pid":1,"user":"user"},"trigger":{"kind":"manual","client_version":"1"},
+                "started_at":"now","payload_sha256":"hash","payload_size":1,"key_id":"key","relaunch":false
+            }))
+            .unwrap();
+            let busy = repair_answer(Response::Busy { current }, || remembered.set(true))
+                .unwrap_err()
+                .downcast::<RepairBusy>()
+                .unwrap();
+            let txn = repair_busy_status(&h, None, busy.0).unwrap().current.unwrap();
+            assert_eq!(serde_json::to_value(txn.kind).unwrap(), kind);
+            assert_eq!(serde_json::to_value(txn.phase).unwrap(), phase);
+        }
+        assert!(!remembered.get());
+        assert!(
+            repair_answer(
+                Response::Error {
+                    message: "missing repair payload".into()
+                },
+                || remembered.set(true)
+            )
+            .is_err()
+        );
+        assert!(remembered.get());
+        assert!(repair_before_install(&h, TriggerKind::Unattended).is_none());
+        assert_eq!(repair_before_install(&h, TriggerKind::Manual).unwrap().version, "2.0.0");
+        assert!(!resolve_existing(&h, |_| true).await);
+        assert!(!automatic::newer_than_pending("2.0.0", h.needs_repair.as_ref()));
+        assert!(!automatic::newer_than_pending("1.9.0", h.needs_repair.as_ref()));
+        assert!(automatic::newer_than_pending("2.1.0", h.needs_repair.as_ref()));
     }
 }

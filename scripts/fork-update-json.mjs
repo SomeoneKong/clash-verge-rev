@@ -73,7 +73,11 @@ const update = {
   notes: fs.readFileSync(notesFile, 'utf8'),
   pub_date: new Date().toISOString(),
   platforms,
-  fork: { format: 1, payloads },
+  fork: {
+    format: 1,
+    ...(process.env.TEST_RELEASE === 'true' && { test: true }),
+    payloads,
+  },
 }
 fs.writeFileSync(
   path.join(dir, 'update.json'),

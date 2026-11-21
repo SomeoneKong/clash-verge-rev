@@ -148,9 +148,9 @@ const localeOf = (language: string) => {
 }
 
 /** A time in the language of the GUI. */
-export const formatTime = (iso: string, language: string) => {
-  const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return iso
+export const formatTime = (value: string | number, language: string) => {
+  const at = new Date(value)
+  if (Number.isNaN(at.getTime())) return String(value)
   return at.toLocaleString(localeOf(language))
 }
 

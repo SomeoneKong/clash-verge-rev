@@ -238,16 +238,8 @@ fn start_embedded_server(listener: tokio::net::TcpListener, token: String) {
             Ok::<_, warp::Rejection>(warp::reply::with_status("ok".to_string(), warp::http::StatusCode::OK))
         });
 
-    let update_unattended = warp::path!("commands" / "update-unattended").and_then(|| async {
-        if !COMMANDS_READY.load(Ordering::Acquire) {
-            return Ok::<_, warp::Rejection>(warp::reply::with_status(
-                "starting".to_string(),
-                warp::http::StatusCode::SERVICE_UNAVAILABLE,
-            ));
-        }
-        AsyncHandler::spawn(crate::core::fork_updater::update_unattended);
-        Ok::<_, warp::Rejection>(warp::reply::with_status("ok".to_string(), warp::http::StatusCode::OK))
-    });
+    let update_unattended =
+        warp::path!("commands" / "update-unattended").map(crate::core::fork_updater::interface::unattended_reply);
 
     let commands = auth
         .clone()

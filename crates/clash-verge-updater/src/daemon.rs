@@ -8,10 +8,10 @@ use anyhow::{Context as _, Result};
 use clash_verge_updater::audit::{self, AuditLog, Record, Source, Stream};
 use clash_verge_updater::manifest::{Kind, Platform};
 use clash_verge_updater::paths::Paths;
-use clash_verge_updater::payload::{MAX_PAYLOAD, Payload, sha256_file};
+use clash_verge_updater::payload::{Payload, sha256_file};
 use clash_verge_updater::protocol::{
-    ApprovedCore, CAPABILITY_CORE, Hello, MAX_FRAME, PROTOCOL, Request, Response, Staged as StagedView, Trigger,
-    TxnView, UserPhaseEvent, read_frame, write_frame,
+    ApprovedCore, CAPABILITY_CORE, Hello, PROTOCOL, Request, Response, Staged as StagedView, Trigger, TxnView,
+    UserPhaseEvent, read_frame, write_frame,
 };
 use clash_verge_updater::state::{Decision, Initiator, Outcome, Phase, State, Txn};
 use clash_verge_updater::sys;
@@ -187,7 +187,7 @@ impl Daemon {
 
     async fn dispatch(self: &Arc<Self>, request: Request, peer: &Initiator) -> Response {
         let result = match request {
-            Request::Hello { .. } => self.hello().await,
+            Request::Hello { .. } => self.hello(peer).await,
             Request::Apply { txn, relaunch } => self.apply(&txn, relaunch, peer).await,
             Request::Status { txn } => Ok(Response::Txn(self.view(&txn).await)),
             Request::Confirm { txn, ok } => self.confirm(&txn, ok, peer).await,
@@ -209,21 +209,10 @@ impl Daemon {
             }
             Request::Audit { before_seq, limit } => {
                 let dir = self.paths.logs_dir();
-                let limit = limit.clamp(1, 500) as usize;
-                let mut records = tokio::task::spawn_blocking(move || audit::read_page(&dir, before_seq, limit))
+                tokio::task::spawn_blocking(move || audit::response_page(&dir, before_seq, limit))
                     .await
-                    .unwrap_or_default();
-                // The answer must fit a frame; the client pages on from the last record it got.
-                let mut budget = MAX_FRAME as usize / 2;
-                let fits = records
-                    .iter()
-                    .take_while(|record| {
-                        let size = serde_json::to_vec(record).map_or(usize::MAX, |bytes| bytes.len() + 1);
-                        budget.checked_sub(size).inspect(|left| budget = *left).is_some()
-                    })
-                    .count();
-                records.truncate(fits);
-                Ok(Response::Audit { records })
+                    .map_err(anyhow::Error::from)
+                    .and_then(std::convert::identity)
             }
             Request::Stage { .. } => unreachable!("stage is handled with its payload"),
         };
@@ -232,12 +221,13 @@ impl Daemon {
         })
     }
 
-    async fn hello(&self) -> Result<Response> {
+    async fn hello(&self, peer: &Initiator) -> Result<Response> {
         let mut inner = self.inner.lock().await;
         tokio::task::block_in_place(|| {
             expire_user_phase(&self.paths, &self.audit, &mut inner.state)?;
             txn::observe(&self.paths, &self.audit, &mut inner.state)
         })?;
+        drop_expired(&mut inner);
         let approved_cores = tokio::task::block_in_place(|| self.approved_cores());
         Ok(Response::Hello(Box::new(Hello {
             protocol: PROTOCOL,
@@ -247,6 +237,8 @@ impl Daemon {
             floor: inner.state.floor.clone(),
             fingerprint: platform::installed_fingerprint(),
             current: inner.state.txn.clone(),
+            staged: inner.staged.is_some(),
+            staged_by_caller: inner.staged.as_ref().is_some_and(|s| s.initiator.id == peer.id),
             needs_repair: inner.state.needs_repair.clone(),
             capabilities: vec![CAPABILITY_CORE.into()],
             service_installed: platform::service_installed(),
@@ -321,17 +313,8 @@ impl Daemon {
     where
         S: AsyncRead + Unpin,
     {
-        if size > MAX_PAYLOAD {
-            return (self.reject(peer, "payload is too large".into()), false);
-        }
-        // What the client says is recorded with the transaction, so it is kept small.
-        let oversized = trigger.kind.len() > 32
-            || trigger.client_version.len() > 64
-            || signatures.is_empty()
-            || signatures.len() > 4
-            || signatures.iter().any(|signature| signature.len() > 2048);
-        if oversized {
-            return (self.reject(peer, "the request carries oversized fields".into()), false);
+        if let Some(reason) = clash_verge_updater::protocol::stage_rejection(&trigger, size, &signatures) {
+            return (self.reject(peer, reason.into()), false);
         }
         let busy = if self.receiving.swap(true, Ordering::AcqRel) {
             Some(TxnView::Unknown)
@@ -441,15 +424,24 @@ impl Daemon {
         if let Err(error) = ready {
             return Ok(self.reject(peer, format!("{error:#}")));
         }
-        let begun = tokio::task::block_in_place(|| self.begin(&mut inner.state, &staged, relaunch));
-        let started = applying(&inner.state, &staged.txn);
+        self.begin_staged(inner, &staged, relaunch)
+    }
+
+    fn begin_staged(
+        self: &Arc<Self>,
+        mut inner: tokio::sync::MutexGuard<'_, Inner>,
+        staged: &Staged,
+        relaunch: bool,
+    ) -> Result<Response> {
+        let begun = tokio::task::block_in_place(|| self.begin(&mut inner.state, staged, relaunch));
+        let current = inner.state.txn.clone();
         drop(inner);
-        // Once the marker exists the transaction is watched to its end, whatever `begin` returned;
-        // a bundle's from the replaced report on, when its privileged phase starts.
-        if started {
-            self.supervise(staged.txn);
-        }
-        Ok(Response::Txn(TxnView::Running(begun?)))
+        begin_response(current, &staged.txn, begun, |id, error| {
+            self.supervise(id.to_owned());
+            if let Some(error) = error {
+                logger::log(&format!("transaction {id}: {error:#}"));
+            }
+        })
     }
 
     /// Persists the transaction, records it, then starts its worker. Nothing has changed if this
@@ -499,19 +491,15 @@ impl Daemon {
             return Err(error.context("the update was not started: it could not be recorded"));
         }
         if txn.phase == Phase::Applying {
-            match platform::spawn_worker(&self.paths, &txn.id) {
-                Ok(worker) => {
-                    if let Some(current) = state.txn.as_mut() {
-                        current.worker = Some(worker);
-                    }
-                    // The worker runs either way; supervision finds it through its scope or journal.
-                    if let Err(error) = state.save(&self.paths.state_file()) {
-                        logger::log(&format!("transaction {}: {error:#}", txn.id));
-                    }
-                }
-                // The worker may run all the same (its start was not confirmed in time), so the
-                // transaction stays open; supervision ends it once nothing of it runs.
-                Err(error) => return Err(error.context("the update worker did not confirm its start")),
+            // On an error the transaction stays open; supervision ends it once nothing of it runs,
+            // as failed when no worker started.
+            let worker = platform::spawn_worker(&self.paths, &txn.id)?;
+            if let Some(current) = state.txn.as_mut() {
+                current.worker = Some(worker);
+            }
+            // The worker runs either way; supervision finds it through its scope or journal.
+            if let Err(error) = state.save(&self.paths.state_file()) {
+                logger::log(&format!("transaction {}: {error:#}", txn.id));
             }
         }
         Ok(state.txn.clone().unwrap_or(txn))
@@ -903,13 +891,7 @@ impl Daemon {
             return Ok(self.reject(peer, format!("{error:#}")));
         }
         let relaunch = relaunch && staged.payload.manifest.kind == Kind::Full;
-        let begun = tokio::task::block_in_place(|| self.begin(&mut inner.state, &staged, relaunch));
-        let started = applying(&inner.state, &staged.txn);
-        drop(inner);
-        if started {
-            self.supervise(staged.txn);
-        }
-        Ok(Response::Txn(TxnView::Running(begun?)))
+        self.begin_staged(inner, &staged, relaunch)
     }
 }
 
@@ -940,12 +922,74 @@ fn expire_user_phase(paths: &Paths, audit: &AuditLog, state: &mut State) -> Resu
     Ok(())
 }
 
-/// The transaction `id` is persisted in its privileged phase.
-fn applying(state: &State, id: &str) -> bool {
-    state
-        .txn
-        .as_ref()
-        .is_some_and(|txn| txn.id == id && txn.phase == Phase::Applying)
+fn begin_response(
+    current: Option<Txn>,
+    id: &str,
+    begun: Result<Txn>,
+    supervise: impl FnOnce(&str, Option<anyhow::Error>),
+) -> Result<Response> {
+    let Some(txn) = current.filter(|txn| txn.id == id && txn.phase == Phase::Applying) else {
+        return Ok(Response::Txn(TxnView::Running(begun?)));
+    };
+    match begun {
+        Ok(_) => supervise(id, None),
+        // Only a worker that may run makes the transaction running for the caller; one that
+        // surely did not start is an error, so the caller does not leave for it.
+        Err(error) if error.downcast_ref::<platform::WorkerUnconfirmed>().is_some() => supervise(id, Some(error)),
+        Err(error) => {
+            supervise(id, None);
+            return Err(error);
+        }
+    }
+    Ok(Response::Txn(TxnView::Running(txn)))
+}
+
+#[cfg(test)]
+#[test]
+#[allow(clippy::unwrap_used, clippy::panic, reason = "tests assert by panicking")]
+fn an_unconfirmed_worker_start_is_running_only_for_the_supervised_transaction() {
+    use std::cell::Cell;
+    let state: State = serde_json::from_value(serde_json::json!({
+        "format":1, "txn":{"id":"repair","version":"2.0.0","kind":"deb","phase":"applying","repair":true,
+        "initiator":{"id":"1","pid":1,"user":"u"},"trigger":{"kind":"repair","client_version":"1"},
+        "started_at":"now","payload_sha256":"hash","payload_size":1,"key_id":"key","relaunch":false}
+    }))
+    .unwrap();
+    let supervised = Cell::new(false);
+    let response = begin_response(
+        state.txn.clone(),
+        "repair",
+        Err(anyhow::anyhow!("worker registration timed out").context(platform::WorkerUnconfirmed)),
+        |id, error| {
+            assert_eq!(id, "repair");
+            assert!(error.unwrap().downcast_ref::<platform::WorkerUnconfirmed>().is_some());
+            supervised.set(true);
+        },
+    )
+    .unwrap();
+    assert!(supervised.get());
+    assert!(matches!(response, Response::Txn(TxnView::Running(t)) if t.id == "repair" && t.kind == Kind::Deb));
+    // A worker that surely did not start is still supervised to its end, but the caller hears
+    // the error and stays.
+    supervised.set(false);
+    let result = begin_response(
+        state.txn.clone(),
+        "repair",
+        Err(anyhow::anyhow!("CreateProcessW failed")),
+        |id, error| {
+            assert_eq!(id, "repair");
+            assert!(error.is_none());
+            supervised.set(true);
+        },
+    );
+    assert!(supervised.get());
+    assert_eq!(result.unwrap_err().to_string(), "CreateProcessW failed");
+    for current in [None, state.txn] {
+        let result = begin_response(current, "missing", Err(anyhow::anyhow!("missing payload")), |_, _| {
+            panic!("no transaction to supervise")
+        });
+        assert_eq!(result.unwrap_err().to_string(), "missing payload");
+    }
 }
 
 fn drop_expired(inner: &mut Inner) {

@@ -6,7 +6,7 @@ const [ThemeModeProvider, useThemeMode, useSetThemeMode] = createContextState<
 
 // save update state
 const [UpdateStateProvider, useUpdateState, useSetUpdateState] =
-  createContextState<boolean>(false)
+  createContextState<{ version: string; fallbackReason?: string } | null>(null)
 
 export {
   ThemeModeProvider,

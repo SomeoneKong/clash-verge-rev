@@ -163,6 +163,7 @@ pub(super) async fn apply(config_write: &MutexGuard<'_, ()>, patch: Patch<'_>, e
     transaction.commit();
     match patch {
         Patch::Verge { patch, .. } => {
+            SilentUpdater::update_schedule(patch);
             if patch.auto_check_update == Some(false) {
                 SilentUpdater::global().discard_pending();
             }

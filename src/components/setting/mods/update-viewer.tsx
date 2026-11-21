@@ -12,14 +12,16 @@ import {
 import { useTranslation } from 'react-i18next'
 import type { Options as ReactMarkdownOptions } from 'react-markdown'
 
-import { BaseDialog, DialogRef } from '@/components/base'
-import { useUpdate } from '@/hooks/use-update'
+import { BaseDialog } from '@/components/base'
+import { type UpdateDialogRef, useDialogRelease } from '@/hooks/use-fork-update'
 import type { DownloadEvent } from '@/services/bindings'
 import { cancelUpdateDownload, installUpdate } from '@/services/cmds'
 import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
 import { useSetUpdateState, useUpdateState } from '@/services/states'
 import { openExternalUrl } from '@/utils/open-external-url'
+
+import { UpdateStatus } from './update-status'
 
 type MarkdownNode = {
   type: string
@@ -169,14 +171,15 @@ const remarkGitHubAlerts = (labels: Record<GitHubAlertType, string>) => {
   return visit
 }
 
-export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
+export function UpdateViewer({ ref }: { ref?: Ref<UpdateDialogRef> }) {
   const { t, i18n } = useTranslation()
 
   const [open, setOpen] = useState(false)
   const updateState = useUpdateState()
   const setUpdateState = useSetUpdateState()
 
-  const { updateInfo } = useUpdate()
+  const { updateInfo, setManual, overview, status, installDisabled } =
+    useDialogRelease(open, updateState)
 
   const [downloaded, setDownloaded] = useState(0)
   const [total, setTotal] = useState(0)
@@ -193,7 +196,10 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
   }, [downloaded, total])
 
   useImperativeHandle(ref, () => ({
-    open: () => setOpen(true),
+    open: (release) => {
+      setManual(release)
+      setOpen(true)
+    },
     close: () => setOpen(false),
   }))
 
@@ -231,19 +237,27 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
   }, [updateInfo])
 
   const onUpdate = useLockFn(async () => {
-    if (!updateInfo?.body) return
+    if (!updateInfo) return
     if (breakChangeFlag) {
       showNotice.error('settings.modals.update.messages.breakChangeError')
       return
     }
+    if (installDisabled) return
     if (updateState) return
-    setUpdateState(true)
+    setUpdateState({ version: updateInfo.version })
     setDownloaded(0)
     setTotal(0)
     downloadedRef.current = 0
     totalRef.current = 0
 
     const onDownloadEvent = (event: DownloadEvent) => {
+      if (event.event === 'Fallback') {
+        setUpdateState({
+          version: updateInfo.version,
+          fallbackReason: event.data.reason,
+        })
+        return
+      }
       if (event.event === 'Started') {
         const contentLength = event.data.contentLength ?? 0
         totalRef.current = contentLength
@@ -276,7 +290,8 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
     } catch (err: any) {
       showNotice.error(err)
     } finally {
-      setUpdateState(false)
+      setUpdateState(null)
+      void overview.refetch()
       setDownloaded(0)
       setTotal(0)
       downloadedRef.current = 0
@@ -332,6 +347,7 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
         flexDirection: 'column',
         pb: 1,
       }}
+      disableOk={installDisabled}
       okBtn={t('settings.modals.update.actions.update')}
       cancelBtn={t('shared.actions.cancel')}
       onClose={() => setOpen(false)}
@@ -548,6 +564,7 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
           </Suspense>
         )}
       </Box>
+      <UpdateStatus {...status} />
       {updateState && (
         <LinearProgress
           variant={total > 0 ? 'determinate' : 'indeterminate'}

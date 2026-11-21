@@ -123,6 +123,7 @@ pub fn spawn_worker(paths: &Paths, id: &str) -> Result<ProcessRef> {
     ensure!(status.success(), "systemd-run failed ({status})");
     // The worker registers itself first thing; wait for it to learn its identity.
     crate::journal::await_worker(&paths.txn_dir(id), before, Duration::from_secs(10))
+        .map_err(|error| error.context(super::WorkerUnconfirmed))
 }
 
 /// The units the workers of a transaction run in: the one applying it, and the one undoing a core

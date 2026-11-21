@@ -23,6 +23,25 @@ export const commands = {
     __TAURI_INVOKE<string[]>('get_network_interfaces'),
   getSystemHostname: () => __TAURI_INVOKE<string>('get_system_hostname'),
   restartApp: () => __TAURI_INVOKE<null>('restart_app'),
+  forkCheckUpdate: (
+    headers: [string, string][],
+    timeout: number | null,
+    proxy: string | null,
+    target: string | null,
+  ) =>
+    __TAURI_INVOKE<{
+      rid: number
+      currentVersion: string
+      version: string
+      body: string | null
+      rawJson: { [key in string]: JsonValue }
+    } | null>('fork_check_update', { headers, timeout, proxy, target }),
+  forkUpdateOverview: (release: JsonValue | null) =>
+    __TAURI_INVOKE<UpdateOverview>('fork_update_overview', { release }),
+  forkUpdateHistory: (before: string | null) =>
+    __TAURI_INVOKE<HistoryEntry[]>('fork_update_history', { before }),
+  forkRepairUpdate: (txn: string) =>
+    __TAURI_INVOKE<null>('fork_repair_update', { txn }),
   installUpdate: (version: string, onEvent: Channel<DownloadEvent>) =>
     __TAURI_INVOKE<boolean>('install_update', { version, onEvent }),
   cancelUpdateDownload: () => __TAURI_INVOKE<void>('cancel_update_download'),
@@ -264,6 +283,22 @@ export type AutoProxy = {
   url: string
 }
 
+export type AutoStatus =
+  | { kind: 'waiting'; version: string; after: number }
+  | { kind: 'confirm'; version: string }
+  | { kind: 'ready'; version: string }
+  | { kind: 'failed'; version: string; reason: string }
+  | { kind: 'unavailable'; reason: string }
+  | { kind: 'candidate'; version: string }
+
+export type CheckedRelease = {
+  rid: number
+  currentVersion: string
+  version: string
+  body: string | null
+  rawJson: { [key in string]: JsonValue }
+}
+
 export type ClashInfo = {
   /**  clash core port */
   mixed_port: number
@@ -443,6 +478,12 @@ export type DownloadEvent =
       }
     }
   | { event: 'Finished' }
+  | {
+      event: 'Fallback'
+      data: {
+        reason: string
+      }
+    }
 
 /**  Operation associated with a pending failure. */
 export type FailedOperation =
@@ -450,6 +491,18 @@ export type FailedOperation =
   | 'systemProxyDisable'
   | 'systemProxyRestore'
   | 'systemProxyGuard'
+
+export type HistoryEntry = {
+  seq: string
+  time: string
+  source: string
+  event: string
+  trigger: string | null
+  from: string | null
+  to: string | null
+  result: string | null
+  error: string | null
+}
 
 /**
  *  What a history of the timeline asks for: events with a `display` within `[since, until]`
@@ -561,6 +614,7 @@ export type IVerge_Deserialize = {
   home_cards?: JsonValue | null
   auto_close_connection?: boolean | null
   auto_check_update?: boolean | null
+  auto_install_update?: boolean | null
   default_latency_test?: string | null
   default_latency_timeout?: number | null
   enable_auto_delay_detection?: boolean | null
@@ -651,6 +705,7 @@ export type IVerge_Serialize = {
   home_cards: JsonValue | null
   auto_close_connection: boolean | null
   auto_check_update: boolean | null
+  auto_install_update: boolean | null
   default_latency_test: string | null
   default_latency_timeout: number | null
   enable_auto_delay_detection: boolean | null
@@ -748,6 +803,17 @@ export type NetworkInterfaceView = {
   addr: InterfaceAddress[]
   mac_addr: string | null
 }
+
+export type NextStep =
+  | { kind: 'busy' }
+  | { kind: 'unknown' }
+  | { kind: 'bootstrap' }
+  | { kind: 'component' }
+  | { kind: 'macComponent' }
+  | { kind: 'repair'; version: string }
+  | { kind: 'fullRepair'; version: string }
+  | { kind: 'fallback'; reason: string }
+  | { kind: 'noPayload' }
 
 /**  What the config of a node says about its login, without secrets. */
 export type NodeConfig = {
@@ -1219,6 +1285,14 @@ export type ProxyViewV1_Serialize = {
 /**  How far an hour was recorded, by the app's recording spans. */
 export type Recorded = 'full' | 'part' | 'none'
 
+export type ReleaseMetadata = JsonValue
+
+export type RepairItem = {
+  txn: string
+  version: string
+  available: boolean
+}
+
 /**  The kind and route of what the core counted for a proxy. */
 export type Route = Route_Serialize | Route_Deserialize
 
@@ -1327,6 +1401,13 @@ export type UnlockItem = {
   status: string
   region: string | null
   check_time: string | null
+}
+
+export type UpdateOverview = {
+  auto: AutoStatus | null
+  appRepair: RepairItem | null
+  coreRepair: string | null
+  next: NextStep
 }
 
 /**  UTC hours, both ends inclusive, whose usage is incomplete. */

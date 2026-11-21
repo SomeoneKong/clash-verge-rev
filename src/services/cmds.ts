@@ -295,6 +295,14 @@ export async function restartApp() {
   return commands.restartApp()
 }
 
+export const forkCheckUpdate = commands.forkCheckUpdate
+export const forkUpdateHistory = commands.forkUpdateHistory
+export const forkRepairUpdate = commands.forkRepairUpdate
+
+export function forkUpdateOverview(release: Record<string, unknown> | null) {
+  return commands.forkUpdateOverview(release as JsonValue | null)
+}
+
 export async function installUpdate(
   version: string,
   onEvent: (event: DownloadEvent) => void,

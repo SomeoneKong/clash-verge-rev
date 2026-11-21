@@ -1,10 +1,7 @@
-import {
-  check,
-  type CheckOptions,
-  type Update,
-} from '@tauri-apps/plugin-updater'
+import { type CheckOptions, type Update } from '@tauri-apps/plugin-updater'
 import { compareVersions as compareSemver } from 'compare-versions'
 
+import { check } from '@/services/fork-update'
 import { version as appVersion } from '@root/package.json'
 
 const SEMVER_FULL_REGEX =

@@ -25,15 +25,19 @@ pub fn log(args: &[String]) -> Result<()> {
         .transpose()
         .context("--since takes an RFC 3339 time")?;
     let json = args.iter().any(|arg| arg == "--json");
-    let records = audit::read_page(&Paths::system().logs_dir(), None, usize::MAX);
+    let dir = Paths::system().logs_dir();
     let mut out = std::io::stdout().lock();
-    for record in records
-        .into_iter()
-        .filter(|record| {
-            since.is_none_or(|since| chrono::DateTime::parse_from_rfc3339(&record.time).is_ok_and(|time| time >= since))
+    for record in audit::merged(&dir, u64::MAX)
+        .filter(|row| {
+            row.as_ref().map_or(true, |record| {
+                since.is_none_or(|since| {
+                    chrono::DateTime::parse_from_rfc3339(&record.time).is_ok_and(|time| time >= since)
+                })
+            })
         })
         .take(limit)
     {
+        let record = record?;
         if json {
             writeln!(out, "{}", serde_json::to_string(&record)?)?;
             continue;

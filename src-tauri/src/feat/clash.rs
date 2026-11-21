@@ -37,6 +37,10 @@ pub async fn restart_clash_core() {
 }
 
 pub async fn restart_app() {
+    restart_with_cleanup(false).await;
+}
+
+async fn restart_with_cleanup(updated: bool) {
     logging!(debug, Type::System, "启动重启应用流程");
     handle::Handle::global().set_is_exiting();
 
@@ -74,6 +78,9 @@ pub async fn restart_app() {
     }
 
     utils::server::shutdown_embedded_server();
+    if updated {
+        crate::core::fork_updater::restart_updated_binary();
+    }
     let app_handle = handle::Handle::app_handle();
     app_handle.restart();
 }
@@ -86,7 +93,7 @@ pub async fn restart_after_update() {
         *CoreManager::global().get_running_mode(),
         crate::core::manager::RunningMode::Service
     ) {
-        return restart_app().await;
+        return restart_with_cleanup(true).await;
     }
     logging!(
         info,
@@ -98,7 +105,7 @@ pub async fn restart_after_update() {
     crate::core::proxy_usage::before_app_exit().await;
     Config::apply_all_and_save_file().await;
     utils::server::shutdown_embedded_server();
-    handle::Handle::app_handle().restart();
+    crate::core::fork_updater::restart_updated_binary();
 }
 
 /// Leaves for an installer the update component runs, which starts the new app once it is done.

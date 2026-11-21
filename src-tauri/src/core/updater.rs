@@ -1,3 +1,7 @@
+#[path = "fork_updater/legacy.rs"]
+pub(super) mod legacy;
+
+use super::fork_updater::automatic;
 use crate::{config::Config, singleton, utils::dirs};
 use anyhow::{Context as _, Result};
 use chrono::Utc;
@@ -6,14 +10,14 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 use tauri_plugin_updater::{Update, UpdaterExt as _};
 use tokio_util::sync::CancellationToken;
 
 pub struct SilentUpdater {
-    update_ready: AtomicBool,
+    schedule_changed: tokio::sync::Notify,
     manual_cancel: Mutex<Option<CancellationToken>>,
     background_cancel: Mutex<Option<CancellationToken>>,
 }
@@ -23,14 +27,10 @@ singleton!(SilentUpdater, SILENT_UPDATER);
 impl SilentUpdater {
     const fn new() -> Self {
         Self {
-            update_ready: AtomicBool::new(false),
+            schedule_changed: tokio::sync::Notify::const_new(),
             manual_cancel: Mutex::new(None),
             background_cancel: Mutex::new(None),
         }
-    }
-
-    pub fn is_update_ready(&self) -> bool {
-        self.update_ready.load(Ordering::Acquire)
     }
 }
 
@@ -38,6 +38,8 @@ impl SilentUpdater {
 struct UpdateCacheMeta {
     version: String,
     downloaded_at: String,
+    #[serde(default)]
+    test: bool,
 }
 
 impl SilentUpdater {
@@ -45,7 +47,7 @@ impl SilentUpdater {
         Ok(dirs::app_home_dir()?.join("update_cache"))
     }
 
-    fn write_cache(bytes: &[u8], version: &str) -> Result<()> {
+    fn write_cache(bytes: &[u8], version: &str, test: bool) -> Result<()> {
         let cache_dir = Self::cache_dir()?;
         std::fs::create_dir_all(&cache_dir)
             .with_context(|| format!("failed to create update cache directory {}", cache_dir.display()))?;
@@ -56,6 +58,7 @@ impl SilentUpdater {
 
         let meta = UpdateCacheMeta {
             version: version.to_string(),
+            test,
             downloaded_at: Utc::now().to_rfc3339(),
         };
         let meta_path = cache_dir.join("pending_update.json");
@@ -261,15 +264,18 @@ pub enum DownloadEvent {
         chunk_length: usize,
     },
     Finished,
+    Fallback {
+        reason: String,
+    },
 }
 
 const MIRRORS: [&str; 2] = ["https://update.hwdns.net/", "https://gh-proxy.org/"];
 /// A source delivering less than this per window is dropped for the next one.
-const MIN_PROGRESS: u64 = 1024 * 1024;
-const PROGRESS_WINDOW: Duration = Duration::from_secs(30);
+pub(super) const MIN_PROGRESS: u64 = 1024 * 1024;
+pub(super) const PROGRESS_WINDOW: Duration = Duration::from_secs(30);
 
 /// The manifest's URL, then the other mirror, then GitHub itself.
-fn download_sources(url: &tauri::Url) -> Vec<tauri::Url> {
+pub(super) fn download_sources(url: &tauri::Url) -> Vec<tauri::Url> {
     let origin = MIRRORS
         .iter()
         .find_map(|mirror| url.as_str().strip_prefix(mirror))
@@ -348,7 +354,7 @@ async fn download_from(
 impl SilentUpdater {
     /// Checks the server; Windows receives `/LANG` to suppress the NSIS language dialog,
     /// see `packages/windows/installer.nsi`.
-    async fn check(app_handle: &tauri::AppHandle) -> Result<Option<Update>> {
+    pub(super) async fn check(app_handle: &tauri::AppHandle, cancel: &CancellationToken) -> Result<Option<Update>> {
         let updater_builder = app_handle.updater_builder();
         #[cfg(target_os = "windows")]
         let updater_builder = {
@@ -356,30 +362,24 @@ impl SilentUpdater {
             let lang_id = nsis_language_id(&clash_verge_i18n::current_language(verge_lang.as_deref()));
             updater_builder.installer_arg(format!("/LANG={lang_id}"))
         };
-        Ok(updater_builder.build()?.check().await?)
-    }
-
-    /// The gate goes with the installation, which may outlast a caller that stops waiting.
-    async fn install(update: Update, bytes: Vec<u8>, gate: tokio::sync::MutexGuard<'static, ()>) -> Result<()> {
-        // On Windows the installer ends the app right away, with its core left running.
-        crate::feat::settle_config_updates().await;
-        Ok(tokio::task::spawn_blocking(move || {
-            let _gate = gate;
-            update.install(&bytes)
-        })
-        .await??)
+        let updater = updater_builder.header("Cache-Control", "no-cache")?.build()?;
+        automatic::inspect_offer(&updater, cancel, true).await
     }
 
     /// Installs a newer cached update before normal startup, if the user confirms.
     pub async fn try_install_on_startup(&self, app_handle: &tauri::AppHandle) -> bool {
-        // With the update component, updates are applied from the update dialog only.
+        if super::fork_updater::unattended_requested() {
+            return false;
+        }
+        let cancel = self.background_token();
+        // Component payloads use a separate cache.
         if super::fork_updater::available().await {
             Self::delete_cache();
             return false;
         }
         // An update the component was applying, or a state that cannot be read, rules out
         // installing another way now; the cache stays for a later start.
-        if super::fork_updater::update_in_progress() {
+        if automatic::enabled().await || super::fork_updater::update_in_progress() {
             return false;
         }
         let Ok(gate) = super::fork_updater::take_gate() else {
@@ -397,6 +397,10 @@ impl SilentUpdater {
             Err(_) => return false, // No cache, nothing to do
         };
 
+        if meta.test && !automatic::test_mode().unwrap_or(false) {
+            Self::delete_cache();
+            return false;
+        }
         let cached_version = &meta.version;
 
         if !is_build_to_stable(current_version, cached_version) && version_lte(cached_version, current_version) {
@@ -411,42 +415,7 @@ impl SilentUpdater {
             return false;
         }
 
-        logging!(
-            info,
-            Type::System,
-            "Update cache version ({}) > current ({}), asking user to install",
-            cached_version,
-            current_version
-        );
-
-        // Preserve the cache when skipped so the next launch asks again.
-        if !Self::ask_user_to_install(app_handle, cached_version).await {
-            logging!(info, Type::System, "User skipped update install, starting normally");
-            return false;
-        }
-
-        let update = match Self::check(app_handle).await {
-            Ok(Some(u)) => u,
-            Ok(None) => {
-                logging!(
-                    info,
-                    Type::System,
-                    "No update available from server, cache may be stale, cleaning up"
-                );
-                Self::delete_cache();
-                return false;
-            }
-            Err(e) => {
-                logging!(
-                    warn,
-                    Type::System,
-                    "Failed to check for update at startup: {e:#}, will retry next launch"
-                );
-                return false; // Keep cache for next attempt
-            }
-        };
-
-        let Some(bytes) = Self::verified_cache(app_handle, &update) else {
+        let Some((update, bytes)) = Self::confirmed_startup_cache(app_handle, cached_version, &cancel).await else {
             return false;
         };
 
@@ -456,15 +425,22 @@ impl SilentUpdater {
         Self::show_update_splash(app_handle, &version);
 
         // `install()` may hang (#2558); on Windows NSIS can take over without returning.
-        let install = tokio::time::timeout(std::time::Duration::from_secs(30), Self::install(update, bytes, gate));
+        let install = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            Self::install(update, bytes, gate, Some(cancel)),
+        );
         match install
             .await
             .unwrap_or_else(|_| Err(anyhow::anyhow!("install timed out (30s)")))
         {
-            Ok(()) => {
+            Ok(true) => {
                 logging!(info, Type::System, "Update v{version} install triggered at startup");
                 Self::delete_cache();
                 true
+            }
+            Ok(false) => {
+                Self::close_update_splash(app_handle);
+                false
             }
             Err(e) => {
                 logging!(
@@ -493,10 +469,7 @@ impl SilentUpdater {
         let cancel = CancellationToken::new();
         *self.manual_cancel.lock() = Some(cancel.clone());
 
-        let checked = tokio::select! {
-            checked = Self::check(app_handle) => Some(checked),
-            () = cancel.cancelled() => None,
-        };
+        let checked = legacy::while_requested(&cancel, Self::check(app_handle, &cancel)).await;
         let update = match checked.transpose() {
             Ok(Some(Some(update))) if update.version == version => update,
             Ok(Some(_)) => {
@@ -514,14 +487,12 @@ impl SilentUpdater {
             }
         };
 
-        // Set before installing: a full update or the Windows installer leaves without returning.
-        let show = super::fork_updater::WindowAfterUpdate::show();
         match super::fork_updater::install(&update, &on_event, &cancel, super::fork_updater::TriggerKind::Manual).await
         {
             Ok(super::fork_updater::Outcome::Applied) => {
                 self.manual_cancel.lock().take();
                 Self::delete_cache();
-                show.keep();
+                super::fork_updater::WindowAfterUpdate::show().keep();
                 return Ok(true);
             }
             Ok(super::fork_updater::Outcome::Cancelled) => {
@@ -530,6 +501,7 @@ impl SilentUpdater {
                 return Ok(false);
             }
             Ok(super::fork_updater::Outcome::Fallback(reason)) => {
+                self.prepare_fallback(version, &reason, &cancel, &on_event).await?;
                 logging!(
                     info,
                     Type::System,
@@ -543,8 +515,9 @@ impl SilentUpdater {
         }
 
         let prepared = tokio::select! {
-            prepared = Self::prepare_install(app_handle, update, on_event) => Some(prepared),
+            biased;
             () = cancel.cancelled() => None,
+            prepared = Self::prepare_install(app_handle, update, on_event) => Some(prepared),
         };
         // `cancel_download` cancels under the lock, so once the token is taken back its state is
         // final; a cancel during the last synchronous poll of `prepare_install` still wins.
@@ -555,9 +528,8 @@ impl SilentUpdater {
         };
 
         logging!(info, Type::System, "Installing update v{version}...");
-        Self::install(update, bytes, gate).await?;
+        Self::install(update, bytes, gate, None).await?;
         Self::delete_cache();
-        show.keep();
         Ok(true)
     }
 
@@ -586,7 +558,6 @@ impl SilentUpdater {
         if let Some(cancel) = cancel {
             cancel.cancel();
         }
-        self.update_ready.store(false, Ordering::Release);
         Self::delete_cache();
     }
 }
@@ -618,7 +589,7 @@ impl SilentUpdater {
 
 impl SilentUpdater {
     /// Uses injected HTML so the splash has no bundled-file dependency.
-    fn show_update_splash(app_handle: &tauri::AppHandle, version: &str) {
+    pub(super) fn show_update_splash(app_handle: &tauri::AppHandle, version: &str) {
         use tauri::{WebviewUrl, WebviewWindowBuilder};
 
         let window = match WebviewWindowBuilder::new(app_handle, "update-splash", WebviewUrl::App("index.html".into()))
@@ -689,7 +660,7 @@ impl SilentUpdater {
         logging!(info, Type::System, "Update splash window shown");
     }
 
-    fn close_update_splash(app_handle: &tauri::AppHandle) {
+    pub(crate) fn close_update_splash(app_handle: &tauri::AppHandle) {
         use tauri::Manager as _;
         if let Some(window) = app_handle.get_webview_window("update-splash") {
             let _ = window.close();
@@ -701,32 +672,15 @@ impl SilentUpdater {
 impl SilentUpdater {
     async fn check_and_download(&self, app_handle: &tauri::AppHandle) -> Result<()> {
         // Registered before reading the switch, so `discard_pending` either cancels it or ran first.
-        let cancel = CancellationToken::new();
-        *self.background_cancel.lock() = Some(cancel.clone());
+        let cancel = self.background_token();
         let auto_check = Config::verge().await.latest_arc().auto_check_update.unwrap_or(true);
         if !auto_check {
             logging!(debug, Type::System, "Silent update skipped: auto_check_update is false");
             return Ok(());
         }
 
-        if self.is_update_ready() {
-            logging!(debug, Type::System, "Silent update skipped: update already pending");
+        let Some((update, component_available)) = Self::legacy_background_offer(app_handle, &cancel).await? else {
             return Ok(());
-        }
-
-        logging!(info, Type::System, "Silent updater: checking for updates...");
-
-        let updater = app_handle.updater()?;
-        let update = match updater.check().await {
-            Ok(Some(update)) => update,
-            Ok(None) => {
-                logging!(info, Type::System, "Silent updater: no update available");
-                return Ok(());
-            }
-            Err(e) => {
-                logging!(warn, Type::System, "Silent updater: check failed: {e}");
-                return Err(e.into());
-            }
         };
 
         let version = update.version.clone();
@@ -747,7 +701,7 @@ impl SilentUpdater {
             return Ok(());
         }
 
-        if super::fork_updater::available().await {
+        if component_available {
             logging!(
                 info,
                 Type::System,
@@ -769,13 +723,23 @@ impl SilentUpdater {
                 return Ok(());
             };
             let bytes = bytes?;
+            if automatic::enabled().await || cancel.is_cancelled() {
+                return Ok(());
+            }
             logging!(info, Type::System, "Silent updater: download complete");
-            Self::write_cache(&bytes, &version)?;
+            Self::write_cache(
+                &bytes,
+                &version,
+                update.raw_json["fork"]["test"].as_bool().unwrap_or(false),
+            )?;
         }
 
         // Serialized with `discard_pending` in the verge patch, which holds the same lock.
         let _config_write = Config::lock_config_write().await;
-        if cancel.is_cancelled() || !Config::verge().await.latest_arc().auto_check_update.unwrap_or(true) {
+        if cancel.is_cancelled()
+            || automatic::enabled().await
+            || !Config::verge().await.latest_arc().auto_check_update.unwrap_or(true)
+        {
             logging!(
                 info,
                 Type::System,
@@ -784,8 +748,6 @@ impl SilentUpdater {
             Self::delete_cache();
             return Ok(());
         }
-
-        self.update_ready.store(true, Ordering::Release);
 
         logging!(
             info,
@@ -796,7 +758,6 @@ impl SilentUpdater {
     }
 
     pub async fn start_background_check(&self, app_handle: tauri::AppHandle) {
-        // Permanent watcher: daily update cycles for the lifetime of the app.
         logging!(info, Type::System, "Silent updater: background task started");
 
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
@@ -806,7 +767,11 @@ impl SilentUpdater {
                 logging!(warn, Type::System, "Silent updater: cycle error: {e}");
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
+            self.wait_for_next_check().await;
         }
     }
 }
+
+#[cfg(test)]
+#[path = "fork_updater/cache_tests.rs"]
+mod cache_tests;

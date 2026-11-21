@@ -307,17 +307,24 @@ pub fn finish(paths: &Paths, audit: &AuditLog, state: &mut State, result: Worker
     }
     audit.write(Stream::Audit, record)?;
 
-    // The state in memory changes only once the new one is on disk; until then the transaction
-    // stays open and its end is tried again.
+    save_finished(paths, state, &finished)?;
+    prune_payloads(paths, state);
+    prune_txn_dirs(paths, &txn.id);
+    Ok(finished)
+}
+
+fn save_finished(paths: &Paths, state: &mut State, finished: &Finished) -> Result<()> {
+    let outcome = finished.outcome;
+    let core = finished.kind == Kind::Core;
     let mut next = state.clone();
     if core {
         if outcome == Outcome::Applied {
             if next
                 .core_floor
                 .as_deref()
-                .is_none_or(|floor| version::compare(&txn.version, floor).is_ok_and(|order| order.is_gt()))
+                .is_none_or(|floor| version::compare(&finished.version, floor).is_ok_and(|order| order.is_gt()))
             {
-                next.core_floor = Some(txn.version.clone());
+                next.core_floor = Some(finished.version.clone());
             }
             next.core_needs_repair = None;
         } else if outcome == Outcome::NeedsRepair {
@@ -329,16 +336,14 @@ pub fn finish(paths: &Paths, audit: &AuditLog, state: &mut State, result: Worker
         if next
             .floor
             .as_deref()
-            .is_none_or(|floor| version::compare(&txn.version, floor).is_ok_and(|order| order.is_gt()))
+            .is_none_or(|floor| version::compare(&finished.version, floor).is_ok_and(|order| order.is_gt()))
         {
-            next.floor = Some(txn.version.clone());
+            next.floor = Some(finished.version.clone());
         }
-        next.observed_version = Some(txn.version.clone());
-        if next
-            .needs_repair
-            .as_ref()
-            .is_some_and(|pending| version::compare(&pending.version, &txn.version).is_ok_and(|order| order.is_le()))
-        {
+        next.observed_version = Some(finished.version.clone());
+        if next.needs_repair.as_ref().is_some_and(|pending| {
+            version::compare(&pending.version, &finished.version).is_ok_and(|order| order.is_le())
+        }) {
             next.needs_repair = None;
         }
     } else if outcome == Outcome::NeedsRepair {
@@ -348,9 +353,7 @@ pub fn finish(paths: &Paths, audit: &AuditLog, state: &mut State, result: Worker
     next.txn = None;
     next.save(&paths.state_file())?;
     *state = next;
-    prune_payloads(paths, state);
-    prune_txn_dirs(paths, &txn.id);
-    Ok(finished)
+    Ok(())
 }
 
 /// A core upgrade whose worker published its files waits for the GUI to tell whether the new core
@@ -744,6 +747,32 @@ mod tests {
                 .is_none()
         );
         (paths, audit, state)
+    }
+
+    #[test]
+    fn installing_a_newer_app_clears_the_old_pending_repair_on_disk() {
+        let dir = std::env::temp_dir().join(format!("cvu-app-repair-{}", std::process::id()));
+        let (paths, _, mut state) = published(&dir);
+        let mut done = Finished {
+            id: "a".into(),
+            version: "2.0.0".into(),
+            from_version: None,
+            kind: Kind::Full,
+            outcome: Outcome::NeedsRepair,
+            finished_at: "now".into(),
+            error: None,
+            initiator: state.txn.as_ref().unwrap().initiator.clone(),
+        };
+        save_finished(&paths, &mut state, &done).unwrap();
+        assert!(State::load(&paths.state_file()).unwrap().needs_repair.is_some());
+        done.version = "2.1.0".into();
+        done.id = "b".into();
+        done.outcome = Outcome::Applied;
+        save_finished(&paths, &mut state, &done).unwrap();
+        let disk = State::load(&paths.state_file()).unwrap();
+        assert!(disk.needs_repair.is_none());
+        assert_eq!(disk.floor.as_deref(), Some("2.1.0"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

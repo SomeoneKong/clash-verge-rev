@@ -129,6 +129,7 @@ pub struct IVerge {
     pub auto_close_connection: Option<bool>,
 
     pub auto_check_update: Option<bool>,
+    pub auto_install_update: Option<bool>,
     #[specta(type = Option<std::string::String>)]
     pub default_latency_test: Option<String>,
 
@@ -404,6 +405,7 @@ impl IVerge {
             proxy_guard_duration: Some(30),
             auto_close_connection: Some(false),
             auto_check_update: Some(true),
+            auto_install_update: Some(false),
             enable_builtin_enhanced: Some(true),
             auto_log_clean: Some(2), // 1: 1天, 2: 7天, 3: 30天, 4: 90天
             enable_auto_backup_schedule: Some(false),
@@ -500,6 +502,7 @@ impl IVerge {
 
         patch!(auto_close_connection);
         patch!(auto_check_update);
+        patch!(auto_install_update);
         patch!(default_latency_test);
         patch!(default_latency_timeout);
         patch!(enable_auto_delay_detection);

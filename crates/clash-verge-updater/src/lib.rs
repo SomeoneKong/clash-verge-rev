@@ -2,6 +2,7 @@
 //! IPC protocol, the persistent state and the audit log. The GUI and the component both use them.
 
 pub mod audit;
+pub mod automatic;
 pub mod client;
 pub mod keys;
 pub mod manifest;

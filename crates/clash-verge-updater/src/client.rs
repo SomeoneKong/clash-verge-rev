@@ -38,6 +38,9 @@ impl Connection {
 
     /// Hands a payload over; the component answers once it has verified it.
     pub async fn stage(&mut self, trigger: Trigger, payload: &[u8], signatures: Vec<String>) -> Result<Response> {
+        if let Some(reason) = crate::protocol::stage_rejection(&trigger, payload.len() as u64, &signatures) {
+            return Ok(Response::Rejected { reason: reason.into() });
+        }
         let request = Request::Stage {
             trigger,
             size: payload.len() as u64,
