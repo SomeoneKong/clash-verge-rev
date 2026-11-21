@@ -65,6 +65,14 @@
     "lost": "Core {{instance}} ended with {{count}} records not saved; they can no longer be collected",
     "tailAt": "Core {{instance}} was last collected at {{time}}; what it recorded after is unknown"
   },
+  "clear": {
+    "title": "Borrar la memoria de la estrategia de sondeo",
+    "confirm": "Se borrarán los recuentos de fallos y degradación de los miembros, sus cambios a menor prioridad y períodos de prueba, los recuentos de fallos de los pools de tráfico y las preferencias de fiabilidad.\n\nSe conservarán la disponibilidad actual de los nodos, la lista de exclusiones y los fallos en curso de los pools de tráfico.\n\nUsa esta opción si observaciones erróneas redujeron la prioridad de algún miembro, por ejemplo, si una pérdida de paquetes en la red local se interpretó como un fallo del nodo.",
+    "success": "Se borró la memoria de la estrategia de sondeo. Grupos procesados: {{groups}}.",
+    "successPending": "Se borró la memoria de la estrategia de sondeo. Grupos procesados: {{groups}}. Grupos que se completarán más tarde: {{pending}}.",
+    "unsupported": "El núcleo actual no admite borrar la memoria de la estrategia.",
+    "unconfirmed": "No se pudo confirmar el resultado. Abre «Strategy history» en la página de proxies, pulsa «Refresh» para obtener los registros más recientes del núcleo y busca, a la hora de esta acción, una entrada que indique en cuántos grupos se borró la memoria de la estrategia."
+  },
   "pin": {
     "pinned": "Pinned to {{name}}",
     "inactive": "Pinned to {{name}}, which is unavailable now; {{now}} carries the traffic meanwhile"

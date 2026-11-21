@@ -65,6 +65,14 @@
     "lost": "Core {{instance}} ended with {{count}} records not saved; they can no longer be collected",
     "tailAt": "Core {{instance}} was last collected at {{time}}; what it recorded after is unknown"
   },
+  "clear": {
+    "title": "Speicher der Prüfstrategie löschen",
+    "confirm": "Dadurch werden die Zähler für Ausfälle und Leistungseinbußen von Mitgliedern, ihre Zurückstufungen und Probephasen, die Ausfallzähler der Verkehrspools sowie die Zuverlässigkeitspräferenzen gelöscht.\n\nDie aktuelle Verfügbarkeit der Knoten, die Ausschlussliste und laufende Ausfälle in Verkehrspools bleiben erhalten.\n\nVerwenden Sie diese Option, wenn fehlerhafte Beobachtungen ein Mitglied zurückgestuft haben, etwa wenn lokaler Paketverlust als Knotenausfall gewertet wurde.",
+    "success": "Speicher der Prüfstrategie gelöscht. Verarbeitete Gruppen: {{groups}}.",
+    "successPending": "Speicher der Prüfstrategie gelöscht. Verarbeitete Gruppen: {{groups}}. Später fertiggestellte Gruppen: {{pending}}.",
+    "unsupported": "Der aktuelle Core unterstützt das Löschen des Strategiespeichers nicht.",
+    "unconfirmed": "Das Ergebnis konnte nicht bestätigt werden. Öffnen Sie auf der Proxy-Seite „Strategy history“, klicken Sie auf „Refresh“, um die neuesten Einträge vom Kern abzurufen, und suchen Sie zum Zeitpunkt dieser Aktion nach einem Eintrag mit der Anzahl der Gruppen, deren Strategiespeicher gelöscht wurde."
+  },
   "pin": {
     "pinned": "Pinned to {{name}}",
     "inactive": "Pinned to {{name}}, which is unavailable now; {{now}} carries the traffic meanwhile"

@@ -65,6 +65,14 @@
     "lost": "Core {{instance}} ended with {{count}} records not saved; they can no longer be collected",
     "tailAt": "Core {{instance}} was last collected at {{time}}; what it recorded after is unknown"
   },
+  "clear": {
+    "title": "Limpar a memória da estratégia de sondagem",
+    "confirm": "Isso limpa as contagens de falhas e de degradação dos membros, as reduções de prioridade e os períodos de teste, as contagens de falhas dos pools de tráfego e as preferências de confiabilidade.\n\nA disponibilidade atual dos nós, a lista de exclusões e as falhas em andamento nos pools de tráfego são mantidas.\n\nUse esta opção quando observações incorretas reduzirem a prioridade de membros, por exemplo, quando a perda de pacotes na rede local for interpretada como uma falha do nó.",
+    "success": "Memória da estratégia de sondagem limpa. Grupos processados: {{groups}}.",
+    "successPending": "Memória da estratégia de sondagem limpa. Grupos processados: {{groups}}. Grupos que serão concluídos depois: {{pending}}.",
+    "unsupported": "O núcleo atual não oferece suporte à limpeza da memória da estratégia.",
+    "unconfirmed": "Não foi possível confirmar o resultado. Na página de proxies, abra «Strategy history», clique em «Refresh» para obter os registros mais recentes do núcleo e procure, no horário desta ação, um registro com a quantidade de grupos que tiveram a memória da estratégia limpa."
+  },
   "pin": {
     "pinned": "Pinned to {{name}}",
     "inactive": "Pinned to {{name}}, which is unavailable now; {{now}} carries the traffic meanwhile"

@@ -65,6 +65,14 @@
     "lost": "Core {{instance}} ended with {{count}} records not saved; they can no longer be collected",
     "tailAt": "Core {{instance}} was last collected at {{time}}; what it recorded after is unknown"
   },
+  "clear": {
+    "title": "Hapus memori strategi pemeriksaan",
+    "confirm": "Tindakan ini menghapus hitungan kegagalan dan penurunan kinerja anggota, penurunan prioritas dan masa uji coba anggota, hitungan gangguan pada kumpulan lalu lintas, serta preferensi keandalan.\n\nStatus ketersediaan node saat ini, daftar pengecualian, dan gangguan kumpulan lalu lintas yang masih berlangsung tetap dipertahankan.\n\nGunakan opsi ini jika pengamatan keliru menyebabkan prioritas anggota diturunkan, misalnya ketika paket yang hilang di jaringan lokal dianggap sebagai kegagalan node.",
+    "success": "Memori strategi pemeriksaan telah dihapus dari {{groups}} grup.",
+    "successPending": "Memori strategi pemeriksaan telah dihapus dari {{groups}} grup. {{pending}} grup akan selesai nanti.",
+    "unsupported": "Inti saat ini tidak mendukung penghapusan memori strategi.",
+    "unconfirmed": "Hasil tidak dapat dikonfirmasi. Buka «Strategy history» di halaman proksi, klik «Refresh» untuk mengambil catatan terbaru dari inti, lalu cari catatan pada waktu tindakan ini yang menunjukkan berapa grup yang memori strateginya telah dihapus."
+  },
   "pin": {
     "pinned": "Pinned to {{name}}",
     "inactive": "Pinned to {{name}}, which is unavailable now; {{now}} carries the traffic meanwhile"

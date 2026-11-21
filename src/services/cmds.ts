@@ -529,6 +529,10 @@ export async function getProbeView() {
   return commands.getProbeView()
 }
 
+export async function clearProbeMemory() {
+  return commands.clearProbeMemory()
+}
+
 export async function queryProbeHistory(query: HistoryQuery) {
   return commands.queryProbeHistory(query)
 }
