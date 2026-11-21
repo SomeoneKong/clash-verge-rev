@@ -26,6 +26,7 @@ import { GuardState } from './mods/guard-state'
 import { NetworkInterfaceViewer } from './mods/network-interface-viewer'
 import { useNodeLoginAttention } from './mods/node-login'
 import { NodeLoginViewer } from './mods/node-login-viewer'
+import { ProbeMemorySetting } from './mods/probe-memory-setting'
 import { SettingItem, SettingList } from './mods/setting-comp'
 import { TunnelsViewer } from './mods/tunnels-viewer'
 import { AutoCloseConnectionSetting } from './mods/verge-switch-settings'
@@ -374,6 +375,7 @@ const SettingClash = ({ onError }: Props) => {
 
       <AutoCloseConnectionSetting />
       <ConnectionStatsSetting />
+      <ProbeMemorySetting />
     </SettingList>
   )
 }

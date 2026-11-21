@@ -65,6 +65,14 @@
     "lost": "Core {{instance}} ended with {{count}} records not saved; they can no longer be collected",
     "tailAt": "Core {{instance}} was last collected at {{time}}; what it recorded after is unknown"
   },
+  "clear": {
+    "title": "Yoklama stratejisi belleğini temizle",
+    "confirm": "Üyelerin arıza ve performans düşüşü sayaçları, öncelik düşürmeleri ve deneme süreleri, trafik havuzlarının arıza sayaçları ve güvenilirlik tercihleri temizlenir.\n\nDüğümlerin mevcut kullanılabilirliği, hariç tutma listesi ve trafik havuzlarında devam eden arızalar korunur.\n\nYanlış gözlemler üyelerin önceliğini düşürdüyse bu seçeneği kullanın. Örneğin, yerel ağdaki paket kaybı bir düğüm arızası olarak değerlendirildiyse.",
+    "success": "{{groups}} grubun yoklama stratejisi belleği temizlendi.",
+    "successPending": "{{groups}} grubun yoklama stratejisi belleği temizlendi. Kalan {{pending}} grup daha sonra tamamlanacak.",
+    "unsupported": "Geçerli çekirdek strateji belleğini temizlemeyi desteklemiyor.",
+    "unconfirmed": "Sonuç doğrulanamadı. Proxy sayfasında «Strategy history» bölümünü açın, çekirdekten en son kayıtları almak için «Refresh» düğmesine tıklayın ve bu işlemin zamanında, strateji belleği temizlenen grup sayısını gösteren kaydı arayın."
+  },
   "pin": {
     "pinned": "Pinned to {{name}}",
     "inactive": "Pinned to {{name}}, which is unavailable now; {{now}} carries the traffic meanwhile"

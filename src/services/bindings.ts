@@ -218,6 +218,8 @@ export const commands = {
   exportProxyUsage: (path: string) =>
     __TAURI_INVOKE<null>('export_proxy_usage', { path }),
   getProbeView: () => __TAURI_INVOKE<ProbeView>('get_probe_view'),
+  clearProbeMemory: () =>
+    __TAURI_INVOKE<ClearProbeMemoryOutcome>('clear_probe_memory'),
   /**
    *  The events of the timeline a query asks for, with the coverage of each core; the page is
    *  passed on as JSON.
@@ -272,6 +274,11 @@ export type ClashInfo = {
   /**  clash secret */
   secret: string | null
 }
+
+export type ClearProbeMemoryOutcome =
+  | { status: 'ok'; result: ProbeMemoryClear }
+  | { status: 'unsupported' }
+  | { status: 'failed'; error: string }
 
 /**  Whether what a core counted in an hour was taken. */
 export type Collected =
@@ -956,6 +963,12 @@ export type PrfOption_Serialize = {
 export type PrfSelected = {
   name?: string | null
   now?: string | null
+}
+
+export type ProbeMemoryClear = {
+  clear: number
+  groups: number
+  pending: number
 }
 
 /**  What a collection of the decision records came to. */

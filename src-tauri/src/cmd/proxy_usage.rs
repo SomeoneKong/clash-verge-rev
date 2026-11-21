@@ -36,6 +36,35 @@ pub async fn get_probe_view() -> CmdResult<ProbeView> {
     })
 }
 
+#[derive(Debug, serde::Deserialize, serde::Serialize, specta::Type)]
+pub struct ProbeMemoryClear {
+    pub clear: u64,
+    pub groups: u64,
+    pub pending: u64,
+}
+
+#[derive(Debug, serde::Serialize, specta::Type)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum ClearProbeMemoryOutcome {
+    Ok { result: ProbeMemoryClear },
+    Unsupported,
+    Failed { error: String },
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn clear_probe_memory() -> CmdResult<ClearProbeMemoryOutcome> {
+    let result = match handle::Handle::mihomo().clear_probe_memory().await {
+        Ok(Some(result)) => serde_json::from_value(result).map_err(|error| error.to_string()),
+        Ok(None) => return Ok(ClearProbeMemoryOutcome::Unsupported),
+        Err(error) => Err(error.to_string()),
+    };
+    Ok(match result {
+        Ok(result) => ClearProbeMemoryOutcome::Ok { result },
+        Err(error) => ClearProbeMemoryOutcome::Failed { error },
+    })
+}
+
 /// The events of the timeline a query asks for, with the coverage of each core; the page is
 /// passed on as JSON.
 #[tauri::command]

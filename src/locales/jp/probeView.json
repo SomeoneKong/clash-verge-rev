@@ -65,6 +65,14 @@
     "lost": "Core {{instance}} ended with {{count}} records not saved; they can no longer be collected",
     "tailAt": "Core {{instance}} was last collected at {{time}}; what it recorded after is unknown"
   },
+  "clear": {
+    "title": "プローブ戦略の記憶を消去",
+    "confirm": "メンバーの障害・性能低下の回数、優先順位の引き下げと試用状態、トラフィックプールの障害回数、信頼性に基づく優先設定が消去されます。\n\nノードの現在の可用性、除外リスト、発生中のトラフィックプール障害は保持されます。\n\nローカルネットワークのパケット損失がノード障害と見なされるなど、誤った観測でメンバーの優先順位が下がった場合に使用してください。",
+    "success": "{{groups}} グループの戦略の記憶を消去しました。",
+    "successPending": "{{groups}} グループの戦略の記憶を消去しました。残りの {{pending}} グループは後で完了します。",
+    "unsupported": "現在のコアは戦略の記憶の消去に対応していません。",
+    "unconfirmed": "結果を確認できませんでした。プロキシページで「Strategy history」を開き、「Refresh」でコアから最新の記録を取得してから、この操作の時刻に、戦略の記憶を消去したグループ数の記録があるか確認してください。"
+  },
   "pin": {
     "pinned": "Pinned to {{name}}",
     "inactive": "Pinned to {{name}}, which is unavailable now; {{now}} carries the traffic meanwhile"

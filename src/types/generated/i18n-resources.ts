@@ -424,6 +424,14 @@ export interface TranslationResources {
         history: string
         refresh: string
       }
+      clear: {
+        confirm: string
+        success: string
+        successPending: string
+        title: string
+        unconfirmed: string
+        unsupported: string
+      }
       coverage: {
         displayUnknown: string
         gap: string

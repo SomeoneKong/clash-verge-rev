@@ -91,6 +91,7 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
             cmd::get_proxy_usage,
             cmd::export_proxy_usage,
             cmd::get_probe_view,
+            cmd::clear_probe_memory,
             cmd::query_probe_history,
             cmd::refresh_probe_history,
             cmd::get_connection_stats_status,

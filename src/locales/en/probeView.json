@@ -65,6 +65,14 @@
     "lost": "Core {{instance}} ended with {{count}} records not saved; they can no longer be collected",
     "tailAt": "Core {{instance}} was last collected at {{time}}; what it recorded after is unknown"
   },
+  "clear": {
+    "title": "Clear probe strategy memory",
+    "confirm": "This clears member failure and degradation counts, demotions and trial periods, traffic pool failure counts, and reliability preferences.\n\nIt keeps current node availability, the exclusion list, and ongoing traffic pool failures.\n\nUse this when incorrect observations caused members to be demoted, for example when local packet loss was treated as a node failure.",
+    "success": "Cleared probe strategy memory. Groups processed: {{groups}}.",
+    "successPending": "Cleared probe strategy memory. Groups processed: {{groups}}. Groups that will finish later: {{pending}}.",
+    "unsupported": "The current core does not support clearing strategy memory.",
+    "unconfirmed": "Could not confirm the result. Open Strategy history on the Proxies page, click Refresh to collect the latest records from the core, and look for an entry at the time of this action showing how many groups had their strategy memory cleared."
+  },
   "pin": {
     "pinned": "Pinned to {{name}}",
     "inactive": "Pinned to {{name}}, which is unavailable now; {{now}} carries the traffic meanwhile"

@@ -65,6 +65,14 @@
     "lost": "Core {{instance}} ended with {{count}} records not saved; they can no longer be collected",
     "tailAt": "Core {{instance}} was last collected at {{time}}; what it recorded after is unknown"
   },
+  "clear": {
+    "title": "프로브 전략 기억 지우기",
+    "confirm": "멤버의 장애 및 성능 저하 횟수, 우선순위 하향 및 시험 사용 상태, 트래픽 풀 장애 횟수, 신뢰도 선호 설정을 지웁니다.\n\n노드의 현재 가용성, 제외 목록, 진행 중인 트래픽 풀 장애는 유지됩니다.\n\n로컬 네트워크의 패킷 손실이 노드 장애로 처리되는 등 잘못된 관측으로 멤버의 우선순위가 낮아졌을 때 사용하세요.",
+    "success": "{{groups}}개 그룹의 전략 기억을 지웠습니다.",
+    "successPending": "{{groups}}개 그룹의 전략 기억을 지웠습니다. 나머지 {{pending}}개 그룹은 나중에 완료됩니다.",
+    "unsupported": "현재 코어는 전략 기억 지우기를 지원하지 않습니다.",
+    "unconfirmed": "결과를 확인하지 못했습니다. 프록시 페이지에서 ‘Strategy history’를 열고 ‘Refresh’를 눌러 코어에서 최신 기록을 가져온 뒤, 이번 작업 시각에 전략 기억을 지운 그룹 수가 기록되어 있는지 확인하세요."
+  },
   "pin": {
     "pinned": "Pinned to {{name}}",
     "inactive": "Pinned to {{name}}, which is unavailable now; {{now}} carries the traffic meanwhile"

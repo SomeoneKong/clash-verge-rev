@@ -14,6 +14,7 @@ import {
   type ProbeViewState,
   type ProbeViewStatus,
 } from '@/hooks/use-probe-view'
+import { subscribeProbeMemoryCleared } from '@/services/bus/probe-memory'
 import { getProbeView } from '@/services/cmds'
 import delayManager from '@/services/delay'
 import { useQuery } from '@/services/query-client'
@@ -157,6 +158,8 @@ export const ProbeViewProvider = ({ children }: { children: ReactNode }) => {
   const refresh = useCallback(() => {
     if (enabled && !document.hidden) start()
   }, [enabled, start])
+
+  useEffect(() => subscribeProbeMemoryCleared(refresh), [refresh])
 
   // A new config or core may bring another strategy, or support for the view.
   const { data: runtimeConfig } = useRuntimeConfig()
