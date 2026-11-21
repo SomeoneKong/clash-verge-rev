@@ -7,9 +7,12 @@ import { showNotice } from '@/services/notice-service'
 import { GuardState } from './guard-state'
 import { SettingItem } from './setting-comp'
 
-type VergeSwitchKey = 'auto_close_connection' | 'auto_check_update'
+type VergeSwitchKey =
+  | 'auto_close_connection'
+  | 'auto_check_update'
+  | 'auto_install_update'
 
-const VergeSwitch = ({
+export const VergeSwitch = ({
   field,
   fallback,
 }: {
@@ -26,7 +29,12 @@ const VergeSwitch = ({
       onChange={(value) => mutateVerge({ ...verge, [field]: value }, false)}
       onGuard={(value) => patchVerge({ [field]: value })}
     >
-      <Switch edge="end" />
+      <Switch
+        edge="end"
+        disabled={
+          field === 'auto_install_update' && verge?.auto_check_update === false
+        }
+      />
     </GuardState>
   )
 }

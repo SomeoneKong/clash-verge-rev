@@ -21,6 +21,17 @@ pub use macos::*;
 #[cfg(windows)]
 pub use windows::*;
 
+/// The worker was started but did not confirm it in time: it may run all the same. Any other
+/// error of `spawn_worker` means no worker runs.
+#[derive(Debug)]
+pub struct WorkerUnconfirmed;
+
+impl std::fmt::Display for WorkerUnconfirmed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the update worker did not confirm its start")
+    }
+}
+
 /// A real directory (no symlink) that root owns and nobody else can write to.
 #[cfg(unix)]
 pub fn owned_by_root(path: &std::path::Path) -> bool {

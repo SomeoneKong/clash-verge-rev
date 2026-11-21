@@ -416,15 +416,21 @@ static RESUME: std::sync::Mutex<Option<Resume>> = std::sync::Mutex::new(None);
 /// Runs first at startup. A core upgrade that still changes files is waited for before the core is
 /// touched; one of this user that awaits its answer is answered once the core has started. On
 /// macOS the bundle's cores are matched to the service's before anything reads them.
-pub async fn settle_core_upgrade_at_startup() {
+pub async fn settle_core_upgrade_at_startup<F: Future<Output = Option<Hello>>>(
+    mut status: Option<Hello>,
+    mut refresh: impl FnMut() -> F,
+    require_idle: bool,
+) -> (bool, Option<Hello>) {
     let deadline = Instant::now() + STARTUP_WAIT;
     let mut told = false;
     loop {
-        match fork_updater::component_status().await {
+        match status.take() {
             Some(hello) => match hello.current.clone().filter(|txn| txn.kind == Kind::Core) {
                 None => {
-                    align_bundle_with(hello).await;
-                    return;
+                    if hello.current.is_none() {
+                        align_bundle_with(hello.clone()).await;
+                    }
+                    return (told, Some(hello));
                 }
                 Some(txn) if awaiting_own_answer(&txn) => {
                     *RESUME.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Resume {
@@ -432,18 +438,22 @@ pub async fn settle_core_upgrade_at_startup() {
                         version: txn.version,
                         service: hello.service_installed,
                     });
-                    align_bundle_with(hello).await;
-                    return;
+                    align_bundle_with(hello.clone()).await;
+                    return (true, Some(hello));
                 }
                 Some(_) => {}
             },
             // A component that does not answer may have left a worker writing; its state tells.
             None => match clash_verge_updater::client::read_state() {
                 Ok(state) if state.txn.as_ref().is_some_and(|txn| txn.kind == Kind::Core) => {}
-                Ok(_) => return,
+                Ok(state) if (require_idle || told) && state.txn.is_some() => std::process::exit(0),
+                Ok(_) => return (told, None),
                 Err(error) => {
                     logging!(warn, Type::System, "Reading the update state failed: {error:#}");
-                    return;
+                    if require_idle {
+                        std::process::exit(0);
+                    }
+                    return (true, None);
                 }
             },
         }
@@ -461,10 +471,58 @@ pub async fn settle_core_upgrade_at_startup() {
                 Type::System,
                 "The core upgrade did not settle in time; starting anyway"
             );
-            return;
+            return (true, None);
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
+        status = refresh().await;
     }
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+#[tokio::test(start_paused = true)]
+#[allow(clippy::unwrap_used)]
+async fn startup_hands_off_the_observed_app_and_registers_a_published_core() {
+    use clash_verge_service_ipc::OwnerIdentity;
+    let owner = match crate::core::owner_identity::current_owner_identity().unwrap() {
+        OwnerIdentity::Unix { uid, .. } => uid.to_string(),
+        OwnerIdentity::Windows { sid } => sid,
+    };
+    let status = |kind, phase| {
+        serde_json::from_value::<Hello>(serde_json::json!({
+        "protocol": 1, "updater_version": "1", "platform": "test", "service_installed": true,
+        "current": {"id": kind, "version": "2.0.0", "kind": kind, "phase": phase, "initiator": {"id": owner, "pid": 1,
+            "user": "user"}, "trigger": {"kind": "core", "client_version":"1"}, "started_at":"now",
+            "payload_sha256":"hash", "payload_size":1, "key_id":"key", "relaunch":false}
+    })).unwrap()
+    };
+    let (handled, idle) = settle_core_upgrade_at_startup(
+        Some(status("core", "applying")),
+        || {
+            let mut idle = status("core", "applying");
+            idle.current = None;
+            std::future::ready(Some(idle))
+        },
+        true,
+    )
+    .await;
+    assert!(handled);
+    assert!(idle.unwrap().current.is_none());
+
+    let (handled, next) = settle_core_upgrade_at_startup(
+        Some(status("core", "applying")),
+        || std::future::ready(Some(status("full", "applying"))),
+        true,
+    )
+    .await;
+    assert!(handled);
+    assert_eq!(next.unwrap().current.unwrap().kind, Kind::Full);
+
+    let (handled, _) =
+        settle_core_upgrade_at_startup(Some(status("core", "published")), || std::future::ready(None), false).await;
+    assert!(handled);
+    let resumed = RESUME.lock().unwrap().take().unwrap();
+    assert_eq!(resumed.txn, "core");
+    assert!(resumed.service);
 }
 
 /// Runs once the core has started: answers the core upgrade a previous app left published.

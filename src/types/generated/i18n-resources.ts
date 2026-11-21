@@ -107,6 +107,73 @@ export interface TranslationResources {
         title: string
         tooltip: string
       }
+      update: {
+        actual: string
+        auto: string
+        autoInstall: string
+        bootstrap: string
+        busy: string
+        candidate: string
+        claimed: string
+        component: string
+        confirm: string
+        dmg: string
+        empty: string
+        failed: string
+        fallback: string
+        fullRepair: string
+        history: string
+        historyUnavailable: string
+        installer: string
+        macComponent: string
+        manual: string
+        noPayload: string
+        observed: string
+        pending: string
+        ready: string
+        repair: string
+        repairApp: string
+        repairCore: string
+        unavailable: string
+        unknown: string
+        waiting: string
+      }
+      updateEvents: {
+        abandoned: string
+        applied: string
+        applying: string
+        auto_install_failed: string
+        cancelled: string
+        claim: string
+        confirm_timeout: string
+        confirmed: string
+        core: string
+        failed: string
+        fallback: string
+        floor_reset: string
+        install: string
+        installed: string
+        installed_unchanged: string
+        keep: string
+        log_truncated: string
+        needs_repair: string
+        ok: string
+        published: string
+        reconciled: string
+        recovery_blocked: string
+        rejected: string
+        relaunch_failed: string
+        relaunch_skipped: string
+        relaunched: string
+        repair: string
+        repair_superseded: string
+        revert: string
+        rolled_back: string
+        staged: string
+        superseded: string
+        user_phase: string
+        worker_stop_requested: string
+      }
     }
     home: {
       components: {

@@ -20,6 +20,21 @@ pub struct Trigger {
     pub client_version: String,
 }
 
+pub fn stage_rejection(trigger: &Trigger, size: u64, signatures: &[String]) -> Option<&'static str> {
+    if size > crate::payload::MAX_PAYLOAD {
+        Some("payload is too large")
+    } else if trigger.kind.len() > 32
+        || trigger.client_version.len() > 64
+        || signatures.is_empty()
+        || signatures.len() > 4
+        || signatures.iter().any(|s| s.len() > 2048)
+    {
+        Some("the request carries oversized fields")
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UserPhaseEvent {
@@ -87,6 +102,10 @@ pub struct Hello {
     pub floor: Option<String>,
     pub fingerprint: Option<String>,
     pub current: Option<Txn>,
+    #[serde(default)]
+    pub staged: bool,
+    #[serde(default)]
+    pub staged_by_caller: bool,
     pub needs_repair: Option<Finished>,
     #[serde(default)]
     pub capabilities: Vec<String>,
@@ -115,6 +134,12 @@ pub struct Staged {
     pub kind: Kind,
     pub size: u64,
     pub sha256: String,
+}
+
+impl Staged {
+    pub fn matches_target(&self, version: &str, kind: Kind, sha256: &str) -> bool {
+        self.version == version && self.kind == kind && self.sha256.eq_ignore_ascii_case(sha256)
+    }
 }
 
 /// A transaction as the component reports it: still running, or how it ended.
@@ -157,4 +182,38 @@ pub async fn read_frame<R: AsyncRead + Unpin + Send, T: DeserializeOwned>(reader
     let mut body = vec![0; len as usize];
     reader.read_exact(&mut body).await?;
     Ok(serde_json::from_slice(&body)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staged_target_requires_version_kind_and_digest() {
+        let staged = Staged {
+            txn: "t".into(),
+            version: "2.0.0".into(),
+            kind: Kind::Patch,
+            size: 12,
+            sha256: "abc".into(),
+        };
+        assert!(staged.matches_target("2.0.0", Kind::Patch, "ABC"));
+        assert!(!staged.matches_target("2.1.0", Kind::Patch, "abc"));
+        assert!(!staged.matches_target("2.0.0", Kind::Full, "abc"));
+        assert!(!staged.matches_target("2.0.0", Kind::Patch, "def"));
+    }
+
+    #[test]
+    fn stage_header_limits_apply_before_sending_the_body() {
+        let trigger = Trigger {
+            kind: "auto".into(),
+            client_version: "2.0.0".into(),
+        };
+        let size = 8 * 1024 * 1024;
+        assert!(stage_rejection(&trigger, size, &[]).is_some());
+        assert!(stage_rejection(&trigger, size, &vec!["s".into(); 5]).is_some());
+        assert!(stage_rejection(&trigger, size, &["s".repeat(2049)]).is_some());
+        assert!(stage_rejection(&trigger, size, &vec!["s".repeat(2048); 4]).is_none());
+        assert!(stage_rejection(&trigger, crate::payload::MAX_PAYLOAD + 1, &["s".into()]).is_some());
+    }
 }

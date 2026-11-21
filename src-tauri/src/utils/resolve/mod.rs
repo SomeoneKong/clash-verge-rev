@@ -65,6 +65,7 @@ async fn resolve_setup() {
     init_service_manager().await;
     let config_initialized = init_verge_config_before_window().await;
     init_window().await;
+    crate::core::SilentUpdater::close_update_splash(Handle::app_handle());
     feat::reconcile_startup_tun_availability().await;
     init_resources().await;
     if let Err(e) = init::init_dns_config().await {
@@ -99,9 +100,7 @@ async fn resolve_setup() {
     refresh_tray_menu().await;
     resolve_done();
     crate::core::fork_updater::show_after_update().await;
-    if crate::core::fork_updater::unattended_requested() {
-        crate::core::fork_updater::update_unattended().await;
-    }
+    crate::core::fork_updater::run_startup_commands().await;
 }
 
 pub async fn resolve_reset_async() -> Result<(), anyhow::Error> {

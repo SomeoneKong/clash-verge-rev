@@ -91,6 +91,7 @@ verge_registry! {
     home_cards => NoEffect;
     auto_close_connection => NoEffect;
     auto_check_update => NoEffect;
+    auto_install_update => NoEffect;
     default_latency_test => NoEffect;
     default_latency_timeout => NoEffect;
     enable_auto_delay_detection => NoEffect;

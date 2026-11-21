@@ -4,6 +4,7 @@ import { useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DialogRef, TooltipIcon } from '@/components/base'
+import type { UpdateDialogRef } from '@/hooks/use-fork-update'
 import { updateLastCheckTime } from '@/hooks/use-update'
 import {
   exitApp,
@@ -21,6 +22,7 @@ import { version } from '@root/package.json'
 
 import { BackupViewer } from './mods/backup-viewer'
 import { ConfigViewer } from './mods/config-viewer'
+import { ForkUpdateSettings } from './mods/fork-update-settings'
 import { HotkeyViewer } from './mods/hotkey-viewer'
 import { LayoutViewer } from './mods/layout-viewer'
 import { LiteModeViewer } from './mods/lite-mode-viewer'
@@ -42,14 +44,13 @@ const SettingVergeAdvanced = ({ onError: _ }: Props) => {
   const miscRef = useRef<DialogRef>(null)
   const themeRef = useRef<DialogRef>(null)
   const layoutRef = useRef<DialogRef>(null)
-  const updateRef = useRef<DialogRef>(null)
+  const updateRef = useRef<UpdateDialogRef>(null)
   const backupRef = useRef<DialogRef>(null)
   const liteModeRef = useRef<DialogRef>(null)
 
   const onCheckUpdate = async () => {
     try {
       const info = await checkUpdate()
-      // The update dialog shows the cached check, which may predate this one.
       await setCacheData(['checkUpdate'], info)
       updateLastCheckTime()
       if (!info?.available) {
@@ -57,7 +58,7 @@ const SettingVergeAdvanced = ({ onError: _ }: Props) => {
           'settings.components.verge.advanced.notifications.latestVersion',
         )
       } else {
-        updateRef.current?.open()
+        updateRef.current?.open(info)
       }
     } catch (err) {
       console.warn('update check failed:', err)
@@ -135,6 +136,7 @@ const SettingVergeAdvanced = ({ onError: _ }: Props) => {
         label={t('settings.components.verge.advanced.fields.checkUpdates')}
       />
       <AutoCheckUpdateSetting />
+      <ForkUpdateSettings />
 
       <SettingItem
         onClick={() => {
